@@ -146,58 +146,58 @@
     </div>
   </div>
 
-  {#if loading}
-    <!-- 骨架屏：维持布局结构，避免首次加载时大面积空白 -->
-    <div class="space-y-6 animate-pulse">
-      <!-- 四个统计卡片骨架 -->
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {#each [1,2,3,4] as _}
-          <div class="p-5 rounded-2xl bg-white dark:bg-slate-800/80 ring-1 ring-slate-200/50 dark:ring-slate-700/50">
-            <div class="h-3 bg-slate-200 dark:bg-slate-700 rounded w-2/3 mb-3"></div>
-            <div class="h-7 bg-slate-200 dark:bg-slate-700 rounded w-1/2 mb-2"></div>
-            <div class="h-2 bg-slate-100 dark:bg-slate-700/50 rounded w-1/3"></div>
+  <!-- 统计卡片：始终渲染，内部切换骨架/真实数据 -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    {#if loading || !stats}
+      {#each [1,2,3,4] as _}
+        <div class="p-5 rounded-2xl bg-white dark:bg-slate-800/80 ring-1 ring-slate-200/50 dark:ring-slate-700/50 animate-pulse">
+          <div class="flex items-center gap-4">
+            <div class="w-11 h-11 rounded-xl bg-slate-200 dark:bg-slate-700 shrink-0"></div>
+            <div class="flex-1 min-w-0">
+              <div class="h-2.5 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-2"></div>
+              <div class="h-6 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
+            </div>
           </div>
-        {/each}
-      </div>
-      <!-- 应用使用骨架 -->
-      <div class="p-5 rounded-2xl bg-white dark:bg-slate-800/80 ring-1 ring-slate-200/50 dark:ring-slate-700/50">
-        <div class="h-4 bg-slate-200 dark:bg-slate-700 rounded w-24 mb-4"></div>
-        {#each [1,2,3,4] as _}
-          <div class="flex items-center gap-3 mb-3">
-            <div class="w-7 h-7 rounded bg-slate-200 dark:bg-slate-700 flex-shrink-0"></div>
-            <div class="flex-1 h-3 bg-slate-200 dark:bg-slate-700 rounded"></div>
-            <div class="w-16 h-3 bg-slate-100 dark:bg-slate-700/50 rounded"></div>
-          </div>
-        {/each}
-      </div>
-    </div>
-  {:else if error}
-    <div class="card p-6 text-center">
-      <p class="text-red-500">{error}</p>
-      <button class="btn btn-primary mt-4" on:click={loadStats}>重试</button>
-    </div>
-  {:else if stats}
-    <!-- 统计卡片 -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        </div>
+      {/each}
+    {:else}
       <StatsCard title="当天活动总时长" value={formatDuration(stats.total_duration)} icon="⏱️" color="indigo" />
       <StatsCard title="当天办公时长" value={formatDuration(stats.work_time_duration || 0)} icon="🏢" color="emerald" />
       <StatsCard title="浏览器" value={formatDuration(stats.browser_duration)} icon="🌐" color="blue" />
       <StatsCard title="应用数" value={stats.app_usage.length} icon="🖥️" color="amber" />
-    </div>
+    {/if}
+  </div>
 
-    <!-- 网站访问 -->
-    {#if stats.browser_usage && stats.browser_usage.length > 0}
-    <div class="p-5 rounded-2xl bg-white dark:bg-slate-800/80 ring-1 ring-slate-200/50 dark:ring-slate-700/50 mb-6">
-      <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4 flex items-center gap-2">
-        <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/50 dark:to-emerald-900/50 flex items-center justify-center">
-          <span class="text-green-600 dark:text-green-400 text-xs">🌐</span>
-        </div>
-        网站访问
-      </h3>
+  {#if error}
+    <div class="card p-6 text-center mb-6">
+      <p class="text-red-500">{error}</p>
+      <button class="btn btn-primary mt-4" on:click={loadStats}>重试</button>
+    </div>
+  {/if}
+
+  <!-- 网站访问：始终渲染，加载中显示骨架，无数据显示占位文字 -->
+  <div class="p-5 rounded-2xl bg-white dark:bg-slate-800/80 ring-1 ring-slate-200/50 dark:ring-slate-700/50 mb-6">
+    <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4 flex items-center gap-2">
+      <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/50 dark:to-emerald-900/50 flex items-center justify-center">
+        <span class="text-green-600 dark:text-green-400 text-xs">🌐</span>
+      </div>
+      网站访问
+    </h3>
+    {#if loading || !stats}
+      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 animate-pulse">
+        {#each [1,2] as _}
+          <div class="p-4 rounded-xl border border-slate-100 dark:border-slate-700">
+            <div class="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-3"></div>
+            <div class="h-6 bg-slate-200 dark:bg-slate-700 rounded w-1/2 mb-2"></div>
+            <div class="h-3 bg-slate-100 dark:bg-slate-700/50 rounded w-2/3"></div>
+          </div>
+        {/each}
+      </div>
+    {:else if stats.browser_usage && stats.browser_usage.length > 0}
       <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {#each stats.browser_usage as browser}
           <button
-            class="group text-left p-4 rounded-xl border border-slate-200 dark:border-slate-700 
+            class="group text-left p-4 rounded-xl border border-slate-200 dark:border-slate-700
                    bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900
                    hover:border-primary-300 dark:hover:border-primary-700 hover:shadow-lg
                    transition-all duration-200"
@@ -222,25 +222,35 @@
           </button>
         {/each}
       </div>
-    </div>
+    {:else}
+      <div class="flex items-center justify-center py-6 text-slate-300 dark:text-slate-600 text-sm">
+        今日暂无浏览器访问记录
+      </div>
     {/if}
+  </div>
 
-    <!-- 应用使用 -->
-    <div class="p-5 rounded-2xl bg-white dark:bg-slate-800/80 ring-1 ring-slate-200/50 dark:ring-slate-700/50 mb-6">
-      <h3 class="text-lg font-semibold text-slate-800 dark:text-white mb-4">应用使用</h3>
-      {#if stats.app_usage.length > 0}
-        <AppUsageChart data={stats.app_usage} />
-      {:else}
-        <p class="text-slate-500 dark:text-slate-400 text-center py-8">暂无数据</p>
-      {/if}
-    </div>
-  {:else}
-    <div class="card p-6 text-center">
-      <p class="text-slate-500 dark:text-slate-400">暂无数据，开始使用后将显示统计信息</p>
-    </div>
-  {/if}
+  <!-- 应用使用：始终渲染 -->
+  <div class="p-5 rounded-2xl bg-white dark:bg-slate-800/80 ring-1 ring-slate-200/50 dark:ring-slate-700/50 mb-6">
+    <h3 class="text-lg font-semibold text-slate-800 dark:text-white mb-4">应用使用</h3>
+    {#if loading || !stats}
+      <div class="animate-pulse">
+        {#each [1,2,3,4] as _}
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-7 h-7 rounded bg-slate-200 dark:bg-slate-700 flex-shrink-0"></div>
+            <div class="flex-1 h-3 bg-slate-200 dark:bg-slate-700 rounded"></div>
+            <div class="w-16 h-3 bg-slate-100 dark:bg-slate-700/50 rounded"></div>
+          </div>
+        {/each}
+      </div>
+    {:else if stats.app_usage.length > 0}
+      <AppUsageChart data={stats.app_usage} />
+    {:else}
+      <p class="text-slate-500 dark:text-slate-400 text-center py-8">暂无数据</p>
+    {/if}
+  </div>
   </div>
 </div>
+
 
 <!-- 浏览器详情弹窗 -->
 {#if selectedBrowser}

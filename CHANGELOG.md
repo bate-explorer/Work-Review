@@ -5,7 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-03-11
+
+### 修复
+- 修复 Windows 10 不被记录的问题
+  - 改用 `PROCESS_QUERY_LIMITED_INFORMATION` 替代高权限标志，覆盖 UAC 保护进程和 Microsoft Store 应用
+  - 增加 `QueryFullProcessImageNameW` 和窗口标题推断两级备用方案，基本消除 Unknown 进程记录
+  - 新增 `winbase` feature 支持
+- 修复活动总时长严重偏低的问题（Unknown 进程时长全部堆积到同一条记录）
+
+### 优化
+- 概览页布局优化：网站访问和应用使用区块始终渲染，消除加载时的 layout shift
+- 关于页删除无意义的"数据安全保障"说明卡片
+- 侧边栏 Logo 区域视觉优化（图标和间距收紧）
+
 ## [1.0.1] - 2026-03-11
+
 
 ### 修复
 - 修复 Windows 10 启动后概况数据全为 0 的问题

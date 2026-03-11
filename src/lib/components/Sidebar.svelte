@@ -50,14 +50,14 @@
 
 <div class="flex-1 flex flex-col overflow-hidden">
   <!-- Logo 区域 -->
-  <div class="px-4 pt-5 pb-5">
-    <div class="flex items-center gap-4">
-      <div class="w-12 h-12 rounded-xl overflow-hidden shadow-md shrink-0">
+  <div class="px-4 pt-4 pb-3">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-lg overflow-hidden shadow shrink-0">
         <img src="/icons/256x256.png" alt="Work Review" class="w-full h-full object-cover" />
       </div>
       <div class="min-w-0">
-        <h1 class="text-base font-semibold text-slate-800 dark:text-white">Work Review</h1>
-        <p class="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">记录 · 分析 · 证明</p>
+        <h1 class="text-sm font-semibold text-slate-800 dark:text-white leading-tight">Work Review</h1>
+        <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">记录 · 分析 · 证明</p>
       </div>
     </div>
   </div>
@@ -142,7 +142,8 @@
   <!-- 底部工具栏 -->
   <div class="p-4 border-t border-slate-100 dark:border-slate-800">
     <div class="flex items-center justify-between">
-      <span class="text-[10px] text-slate-300 dark:text-slate-600 font-medium">v1.0.1</span>
+      <span class="text-[10px] text-slate-300 dark:text-slate-600 font-medium">v1.0.2</span>
+
       <button on:click={cycleTheme}
         class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-300 transition-all"
         title="{theme === 'system' ? '自动' : theme === 'light' ? '浅色' : '深色'}模式">

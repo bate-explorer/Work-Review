@@ -60,18 +60,6 @@
       </button>
     </div>
 
-    <!-- 数据安全说明：消除用户对更新/重装丢失数据的顾虑 -->
-    <div class="w-full mb-6 px-4 py-3 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 ring-1 ring-emerald-200/50 dark:ring-emerald-800/30 flex items-start gap-2.5">
-      <svg class="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-      </svg>
-      <div class="text-left">
-        <p class="text-xs font-medium text-emerald-700 dark:text-emerald-400">数据安全保障</p>
-        <p class="text-xs text-emerald-600 dark:text-emerald-500 mt-0.5 leading-relaxed">
-          数据存储在系统专属目录，应用<strong>更新或重新安装不会丢失</strong>任何已记录数据。
-        </p>
-      </div>
-    </div>
 
     <!-- 技术栈 -->
     <div class="flex flex-wrap justify-center gap-2 mb-8">
