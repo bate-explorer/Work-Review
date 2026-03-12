@@ -975,7 +975,7 @@ async fn main() {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { has_visible_windows, .. } => {
                 if !has_visible_windows {
-                    if let Some(window) = app_handle.get_webview_window("main") {
+                    if let Some(window) = _app_handle.get_webview_window("main") {
                         let _ = window.unminimize();
                         let _ = window.show();
                         let _ = window.set_focus();
