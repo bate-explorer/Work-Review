@@ -177,16 +177,26 @@ fn get_browser_url_windows(app_name: &str, _window_title: &str) -> Option<String
     
     let app_lower = app_name.to_lowercase();
 
-    // 检查是否为浏览器进程
-    let is_browser = app_lower.contains("chrome")
-        || app_lower.contains("firefox")
+    // 检查是否为浏览器进程（包括国产浏览器）
+    let is_chromium_based = app_lower.contains("chrome")
         || app_lower.contains("msedge")
         || app_lower.contains("brave")
         || app_lower.contains("opera")
         || app_lower.contains("vivaldi")
-        || app_lower.contains("iexplore");
+        || app_lower.contains("360se")      // 360 安全浏览器
+        || app_lower.contains("360chrome")  // 360 极速浏览器
+        || app_lower.contains("qqbrowser")  // QQ 浏览器
+        || app_lower.contains("sogouexplorer") // 搜狗浏览器
+        || app_lower.contains("2345explorer") // 2345 浏览器
+        || app_lower.contains("liebao")     // 猎豹浏览器
+        || app_lower.contains("maxthon")    // 傲游浏览器
+        || app_lower.contains("theworld")   // 世界之窗
+        || app_lower.contains("cent");      // Cent Browser
 
-    if !is_browser {
+    let is_firefox = app_lower.contains("firefox");
+    let is_ie = app_lower.contains("iexplore");
+
+    if !is_chromium_based && !is_firefox && !is_ie {
         return None;
     }
 
@@ -198,10 +208,8 @@ fn get_browser_url_windows(app_name: &str, _window_title: &str) -> Option<String
     use std::process::Command;
 
     // 根据不同浏览器使用不同的方法
-    let script = if app_lower.contains("chrome")
-        || app_lower.contains("msedge")
-        || app_lower.contains("brave")
-    {
+    // Chromium 系浏览器使用相同的 UI 结构
+    let script = if is_chromium_based {
         // Chrome/Edge/Brave 使用类似的 UI 结构
         r#"
         Add-Type -AssemblyName UIAutomationClient
@@ -239,7 +247,7 @@ fn get_browser_url_windows(app_name: &str, _window_title: &str) -> Option<String
             } catch { }
         }
         "#
-    } else if app_lower.contains("firefox") {
+    } else if is_firefox {
         // Firefox 的 UI 结构略有不同
         r#"
         Add-Type -AssemblyName UIAutomationClient

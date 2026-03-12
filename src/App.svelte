@@ -193,44 +193,44 @@
     2. 负责处理窗口拖动 (-webkit-app-region: drag)
     3. 按钮区域排除拖动 (-webkit-app-region: no-drag)
   -->
-  <div class="absolute top-0 left-0 w-full h-7 z-50" style="-webkit-app-region: drag;">
+  <div class="absolute top-0 left-0 w-full h-8 z-50" style="-webkit-app-region: drag;">
     <!-- 仅 Windows/Linux 平台显示自定义窗口控制按钮，macOS 使用原生控件 -->
     {#if platform && platform !== 'macos'}
-    <!-- Windows/Linux 窗口控制按钮 (Left aligned) -->
-    <div class="pl-4 pb-1 flex items-center gap-2 group/titlebar">
-      <!-- Close -->
-      <button 
-        on:click={closeWindow}
-        class="w-3 h-3 rounded-full bg-[#FF5F57] border-[0.5px] border-[#E0443E] flex items-center justify-center focus:outline-none active:brightness-90 transition-all"
-        style="-webkit-app-region: no-drag;"
-        title="关闭"
-      >
-        <svg class="w-2 h-2 text-[#4D0000] opacity-0 group-hover/titlebar:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-      
+    <!-- Windows 风格窗口控制按钮 (右上角) -->
+    <div class="absolute right-0 top-0 flex items-stretch h-8">
       <!-- Minimize -->
-      <button 
+      <button
         on:click={minimizeWindow}
-        class="w-3 h-3 rounded-full bg-[#FFBD2E] border-[0.5px] border-[#D89614] flex items-center justify-center focus:outline-none active:brightness-90 transition-all"
+        class="w-11 h-full flex items-center justify-center hover:bg-slate-200 dark:hover:bg-slate-700 focus:outline-none transition-colors"
         style="-webkit-app-region: no-drag;"
         title="最小化"
       >
-        <svg class="w-2 h-2 text-[#995700] opacity-0 group-hover/titlebar:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+        <svg class="w-3 h-3 text-slate-600 dark:text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14" />
         </svg>
       </button>
-      
+
       <!-- Maximize -->
-      <button 
+      <button
         on:click={maximizeWindow}
-        class="w-3 h-3 rounded-full bg-[#28C840] border-[0.5px] border-[#1AAB29] flex items-center justify-center focus:outline-none active:brightness-90 transition-all"
+        class="w-11 h-full flex items-center justify-center hover:bg-slate-200 dark:hover:bg-slate-700 focus:outline-none transition-colors"
         style="-webkit-app-region: no-drag;"
         title="最大化"
       >
-        <svg class="w-2 h-2 text-[#006500] opacity-0 group-hover/titlebar:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5L12 3m0 0l7.5 7.5M12 3v18" />
+        <svg class="w-3 h-3 text-slate-600 dark:text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <rect x="4" y="4" width="16" height="16" rx="1" />
+        </svg>
+      </button>
+
+      <!-- Close -->
+      <button
+        on:click={closeWindow}
+        class="w-11 h-full flex items-center justify-center hover:bg-red-500 hover:text-white focus:outline-none transition-colors group"
+        style="-webkit-app-region: no-drag;"
+        title="关闭"
+      >
+        <svg class="w-3 h-3 text-slate-600 dark:text-slate-300 group-hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
         </svg>
       </button>
     </div>
@@ -238,12 +238,16 @@
   </div>
 
   <!-- 左侧边栏 -->
-  <div class="w-56 bg-white/80 dark:bg-slate-900/90 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-700/50 flex flex-col pt-2">
+  <div class="w-56 bg-white/80 dark:bg-slate-900/90 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-700/50 flex flex-col"
+       class:pt-7={platform === 'macos'}
+       class:pt-2={platform !== 'macos'}>
     <Sidebar {isRecording} {isPaused} {theme} on:themeChange={handleThemeChange} />
   </div>
-  
+
   <!-- 右侧主内容区域 -->
-  <div class="flex-1 flex flex-col overflow-hidden pt-2">
+  <div class="flex-1 flex flex-col overflow-hidden"
+       class:pt-8={platform !== 'macos'}
+       class:pt-2={platform === 'macos'}>
     <main class="flex-1 overflow-auto">
       <Router {routes} />
     </main>

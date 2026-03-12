@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Windows 11 优先使用 WGC API（高性能），Windows 10 自动切换到 GDI 方案（兼容性优先）
   - 解决了 Win10 与 Win11 截图 API 不兼容导致的记录缺失问题
 
+### 优化
+- 新增国产浏览器 URL 获取支持：360 安全/极速浏览器、QQ 浏览器、搜狗浏览器、2345 浏览器、猎豹浏览器、傲游浏览器等
+- Windows 窗口控制按钮改为原生风格：右上角方形按钮（最小化/最大化/关闭），不再使用 macOS 风格的圆形按钮
+
 ## [1.0.2] - 2026-03-11
 
 ### 修复
