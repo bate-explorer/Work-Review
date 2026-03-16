@@ -719,15 +719,20 @@ pub fn get_overlay_windows(frontmost_app: &str) -> Vec<ActiveWindow> {
         CGWindowListCopyWindowInfo,
     };
 
-    // 系统进程排除列表
+    // 系统进程排除列表（覆盖英文和中文 macOS 系统下的进程名）
     const SYSTEM_PROCESSES: &[&str] = &[
         "Window Server",
         "Dock",
+        "程序坞",
         "SystemUIServer",
         "Control Center",
+        "控制中心",
         "Spotlight",
+        "聚焦",
         "NotificationCenter",
+        "通知中心",
         "Finder",
+        "访达",
         "TextInputMenuAgent",
         "Wallpaper",
         "WindowManager",
@@ -738,6 +743,17 @@ pub fn get_overlay_windows(frontmost_app: &str) -> Vec<ActiveWindow> {
         "CoreServicesUIAgent",
         "ScreenSaverEngine",
         "universalAccessAuthWarn",
+    ];
+
+    // 已知会产生无用浮动工具栏/面板的应用
+    // 这些应用的浮动窗口（非前台时）几乎一定是悬浮工具栏，不应计为独立使用时长
+    const TOOLBAR_APPS: &[&str] = &[
+        "WPS Office",
+        "wpsoffice",
+        "WPS",
+        "Microsoft Word",
+        "Microsoft Excel",
+        "Microsoft PowerPoint",
     ];
 
     let mut results: Vec<ActiveWindow> = Vec::new();
@@ -806,11 +822,23 @@ pub fn get_overlay_windows(frontmost_app: &str) -> Vec<ActiveWindow> {
                 continue;
             }
 
-            // 排除系统进程
+            // 排除系统进程（使用包含匹配，兼容中英文系统名称差异）
             if SYSTEM_PROCESSES
                 .iter()
-                .any(|&sys| owner_name == sys)
+                .any(|&sys| owner_name == sys || owner_name.contains(sys))
             {
+                continue;
+            }
+
+            // 排除已知悬浮工具栏应用的浮动窗口
+            if TOOLBAR_APPS
+                .iter()
+                .any(|&app| owner_name.contains(app))
+            {
+                log::debug!(
+                    "🪟 排除工具栏浮动窗口: {} (layer={})",
+                    owner_name, layer
+                );
                 continue;
             }
 
