@@ -148,21 +148,19 @@
 </script>
 
 <!-- 日报模式切换：紧凑的分段控制 -->
+<!-- 模式选择与连接状态解耦，用户可先选模式再配置模型 -->
 <div class="mb-5">
   <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">日报模式</label>
   <div class="flex gap-2">
     {#each aiModes as mode}
-      {@const available = modeAvailability[mode.value] ?? false}
       {@const isSelected = config.ai_mode === mode.value}
       <button 
         type="button"
-        on:click={() => { if (available || !mode.requiresText) { config.ai_mode = mode.value; handleChange(); } }}
+        on:click={() => { config.ai_mode = mode.value; handleChange(); }}
         class="flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150
                {isSelected
                  ? 'bg-primary-500 text-white shadow-sm' 
-                 : available || !mode.requiresText
-                   ? 'bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                   : 'bg-slate-50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-600 cursor-not-allowed'}"
+                 : 'bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'}"
       >
         <div>{mode.label}</div>
         <div class="text-[10px] mt-0.5 {isSelected ? 'text-white/70' : 'text-slate-400 dark:text-slate-500'}">{mode.description}</div>

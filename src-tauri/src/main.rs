@@ -90,6 +90,9 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, window: tauri::
     const MIN_CAPTURE_INTERVAL_MS: u128 = 3000; // 最小截图间隔3秒（防抖）
     const POLL_INTERVAL_SECS: u64 = 5; // 轮询间隔5秒（更精确的时长计算）
 
+    // OCR 并发限制：最多 2 个 OCR 任务同时运行，防止任务堆积消耗内存
+    let ocr_semaphore = Arc::new(tokio::sync::Semaphore::new(2));
+
     // 锁屏检测器（无内部状态，复用同一实例避免重复分配）
     let screen_lock_monitor = screen_lock::ScreenLockMonitor::new();
 
@@ -416,7 +419,19 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, window: tauri::
                         use std::sync::atomic::{AtomicU64, Ordering};
                         static MERGE_SCREENSHOT_HASH: AtomicU64 = AtomicU64::new(0);
 
+                        let ocr_sem = ocr_semaphore.clone();
+
                         tokio::spawn(async move {
+                            // 非阻塞获取 permit，满载时跳过 OCR 避免任务堆积
+                            let _permit = match ocr_sem.try_acquire_owned() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    log::debug!("OCR 并发已满，跳过合并路径 OCR");
+                                    let _ = std::fs::remove_file(&temp_path);
+                                    return;
+                                }
+                            };
+
                             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
                             // 计算哈希做去重判断
@@ -547,7 +562,17 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, window: tauri::
                                     // 异步 OCR（新建活动的截图已保存，不删除）
                                     let state_clone = state.clone();
                                     let screenshot_path_clone = relative_path;
+                                    let ocr_sem = ocr_semaphore.clone();
                                     tokio::spawn(async move {
+                                        // 非阻塞获取 permit，满载时跳过 OCR
+                                        let _permit = match ocr_sem.try_acquire_owned() {
+                                            Ok(p) => p,
+                                            Err(_) => {
+                                                log::debug!("OCR 并发已满，跳过新建路径 OCR");
+                                                return;
+                                            }
+                                        };
+
                                         tokio::time::sleep(
                                             tokio::time::Duration::from_secs(1),
                                         )

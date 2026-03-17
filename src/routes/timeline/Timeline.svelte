@@ -20,13 +20,43 @@
   let error = null;
   let selectedDate = getLocalDateString();
   let selectedActivity = null;
-  let thumbnailCache = {};
   let unlisten = null;
-  let showSummary = false; // 时段摘要显示状态
-  let currentTime = new Date(); // 实时时钟
+  let showSummary = false;
+  let currentTime = new Date();
   let clockInterval;
-  // 应用图标缓存（使用 localStorage 持久化）
+
+  // LRU 缓存：防止长时间运行内存无限增长
+  // 缩略图 ~80KB/条，60 条 ≈ 5MB；高清图 ~300KB/条，20 条 ≈ 6MB
+  const THUMBNAIL_CACHE_LIMIT = 60;
+  const FULLIMAGE_CACHE_LIMIT = 20;
+  let thumbnailCache = {};
+  let thumbnailKeys = [];   // 插入顺序追踪，用于淘汰最旧条目
+  let fullImageCache = {};
+  let fullImageKeys = [];
+
+  // 向 LRU 缓存中写入，超出上限时淘汰最旧条目释放内存
+  function lruSet(cache, keys, limit, key, value) {
+    if (!(key in cache)) {
+      keys.push(key);
+    }
+    cache[key] = value;
+    while (keys.length > limit) {
+      const evicted = keys.shift();
+      delete cache[evicted];
+    }
+  }
+
+  // 清空图片缓存（日期切换时调用，释放旧数据占用的内存）
+  function clearImageCaches() {
+    thumbnailCache = {};
+    thumbnailKeys = [];
+    fullImageCache = {};
+    fullImageKeys = [];
+  }
+
+  // 应用图标缓存（localStorage 持久化，上限 100 个应用）
   const ICON_CACHE_KEY = 'work_review_app_icons';
+  const ICON_CACHE_LIMIT = 100;
   let appIconCache = {};
   
   // 从 localStorage 恢复缓存
@@ -48,9 +78,8 @@
     }
   }
 
-  // 加载应用图标
+  // 加载应用图标（带条目上限，超出时淘汰最旧的缓存）
   async function loadAppIcon(appName) {
-    // 如果已有缓存（包括 null 表示无图标），直接返回
     if (appIconCache[appName] !== undefined) {
       return appIconCache[appName];
     }
@@ -58,10 +87,16 @@
       const base64 = await invoke('get_app_icon', { appName });
       if (base64 && base64.length > 100) {
         appIconCache = { ...appIconCache, [appName]: base64 };
-        saveIconCache();
       } else {
         appIconCache = { ...appIconCache, [appName]: null };
       }
+      // 超出上限时淘汰最旧条目
+      const keys = Object.keys(appIconCache);
+      if (keys.length > ICON_CACHE_LIMIT) {
+        const toRemove = keys.slice(0, keys.length - ICON_CACHE_LIMIT);
+        toRemove.forEach(k => delete appIconCache[k]);
+      }
+      saveIconCache();
       return appIconCache[appName];
     } catch (e) {
       console.warn('加载应用图标失败:', appName, e);
@@ -142,36 +177,34 @@
     return `${appName} 使用中`;
   }
 
-  // 加载缩略图（列表用，400px）
+  // 加载缩略图（列表用，400px），使用 LRU 缓存控制内存
   async function loadThumbnail(screenshotPath) {
     if (thumbnailCache[screenshotPath]) {
       return thumbnailCache[screenshotPath];
     }
     try {
       const base64 = await invoke('get_screenshot_thumbnail', { path: screenshotPath });
-      thumbnailCache[screenshotPath] = `data:image/jpeg;base64,${base64}`;
-      return thumbnailCache[screenshotPath];
+      const dataUrl = `data:image/jpeg;base64,${base64}`;
+      lruSet(thumbnailCache, thumbnailKeys, THUMBNAIL_CACHE_LIMIT, screenshotPath, dataUrl);
+      return dataUrl;
     } catch (e) {
       console.warn('加载缩略图失败:', e);
       return null;
     }
   }
 
-  // 详情图片缓存（高分辨率）
-  let fullImageCache = {};
-  
-  // 加载高分辨率图片（详情用，1200px）
+  // 加载高分辨率图片（详情用，1200px），使用 LRU 缓存控制内存
   async function loadFullImage(screenshotPath) {
     if (fullImageCache[screenshotPath]) {
       return fullImageCache[screenshotPath];
     }
     try {
       const base64 = await invoke('get_screenshot_full', { path: screenshotPath });
-      fullImageCache[screenshotPath] = `data:image/jpeg;base64,${base64}`;
-      return fullImageCache[screenshotPath];
+      const dataUrl = `data:image/jpeg;base64,${base64}`;
+      lruSet(fullImageCache, fullImageKeys, FULLIMAGE_CACHE_LIMIT, screenshotPath, dataUrl);
+      return dataUrl;
     } catch (e) {
       console.warn('加载高清图失败:', e);
-      // 降级使用缩略图
       return await loadThumbnail(screenshotPath);
     }
   }
@@ -191,6 +224,8 @@
     error = null;
     offset = 0;
     hasMore = true;
+    // 日期切换时释放旧图片缓存，防止内存无限增长
+    clearImageCaches();
     
     try {
       const [activitiesData, summariesData] = await Promise.all([
