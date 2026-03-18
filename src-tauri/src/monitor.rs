@@ -296,14 +296,15 @@ fn get_url_via_uiautomation(hwnd: isize) -> Option<String> {
     let window_element = automation.element_from_handle(Handle::from(hwnd)).ok()?;
 
     // 搜寻 ControlType::Edit 和 ControlType::Document
-    // 在现代 Chromium 浏览器（Windows 11）中，有时地址栏对应的是 Document
+    // 使用 find_first 替代 find_all：大幅度提升性能！find_all 会遍历数万个网页元素的完整 DOM 树导致必然超时，
+    // 而地址栏通常是处于极浅层级的第一个 Edit 或 Document。
     let mut targets = Vec::new();
     
-    if let Ok(edits) = automation.create_matcher().from(window_element.clone()).control_type(ControlType::Edit).timeout(500).find_all() {
-        targets.extend(edits);
+    if let Ok(edit) = automation.create_matcher().from(window_element.clone()).control_type(ControlType::Edit).timeout(1000).find_first() {
+        targets.push(edit);
     }
-    if let Ok(docs) = automation.create_matcher().from(window_element.clone()).control_type(ControlType::Document).timeout(500).find_all() {
-        targets.extend(docs);
+    if let Ok(doc) = automation.create_matcher().from(window_element.clone()).control_type(ControlType::Document).timeout(1000).find_first() {
+        targets.push(doc);
     }
 
     for edit in targets {
