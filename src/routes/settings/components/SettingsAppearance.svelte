@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { showToast } from '$lib/stores/toast.js';
 
@@ -10,6 +10,7 @@
   // === 背景图片 ===
   let bgPreview = null;
   let bgUploading = false;
+  let appearanceDestroyed = false;
 
   const blurLabels = ['清晰', '轻微模糊', '中等模糊'];
 
@@ -18,6 +19,10 @@
       const b64 = await invoke('get_background_image');
       if (b64) bgPreview = `data:image/jpeg;base64,${b64}`;
     } catch (e) { /* ignore */ }
+  });
+
+  onDestroy(() => {
+    appearanceDestroyed = true;
   });
 
   function handleBgFileSelect(event) {
@@ -32,19 +37,29 @@
     bgUploading = true;
     const reader = new FileReader();
     reader.onload = async () => {
+      if (appearanceDestroyed) return;
+
       try {
-        const b64Data = reader.result.split(',')[1];
+        const b64Data = typeof reader.result === 'string' ? reader.result.split(',')[1] : null;
+        if (!b64Data) {
+          throw new Error('背景图读取失败');
+        }
         await invoke('save_background_image', { data: b64Data });
+        if (appearanceDestroyed) return;
         config.background_image = 'background.jpg';
         const freshB64 = await invoke('get_background_image');
+        if (appearanceDestroyed) return;
         const imageUrl = freshB64 ? `data:image/jpeg;base64,${freshB64}` : null;
         bgPreview = imageUrl;
         dispatchBgEvent(imageUrl);
       } catch (e) {
+        if (appearanceDestroyed) return;
         console.error('上传背景图失败:', e);
         showToast('上传失败: ' + e, 'error');
       } finally {
-        bgUploading = false;
+        if (!appearanceDestroyed) {
+          bgUploading = false;
+        }
       }
     };
     reader.readAsDataURL(file);

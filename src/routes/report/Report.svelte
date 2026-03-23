@@ -142,17 +142,6 @@
 
   onMount(() => {
     loadConfig();
-    
-    // 如果当前选中的是今天，跨越午夜时自动更新。
-    const timer = setInterval(() => {
-        const newToday = getLocalDateString();
-        // 这里需要保留跨夜逻辑，如果一直停留在当天并跨夜，可能需要更新
-        if (selectedDate === newToday) {
-            // 目前已经是新的一天，用户正好选了新的一天，不用特殊处理
-        }
-    }, 60000);
-    
-    return () => clearInterval(timer);
   });
 </script>
 
@@ -205,8 +194,8 @@
           bind:value={selectedDate}
           class="page-control-input"
         />
-        <span class="page-help-text">可切换到任意历史日期查看历史日报</span>
       </div>
+      <span class="page-help-text">可切换到任意历史日期查看历史日报</span>
       {#if report}
         <button
           class="page-action-warn"
@@ -230,8 +219,11 @@
   <!-- 日报内容 -->
   {#if loading}
     <div class="empty-state-lg">
-      <div class="animate-spin rounded-full h-8 w-8 border-2 border-indigo-500 border-t-transparent mx-auto"></div>
-      <p class="empty-state-copy mt-4">加载中...</p>
+      <div class="empty-state-icon">
+        <div class="animate-spin rounded-full h-8 w-8 border-2 border-indigo-500 border-t-transparent"></div>
+      </div>
+      <h3 class="empty-state-title">正在整理日报</h3>
+      <p class="empty-state-copy mt-1">正在读取当前日期的历史日报与生成状态...</p>
     </div>
   {:else if error}
     <div class="page-banner-error">

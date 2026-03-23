@@ -49,12 +49,6 @@
   $: isTextModelConfigured = textConnectionVerified;
   $: hasTextModelConfig = !!(config?.text_model?.endpoint && config?.text_model?.model);
 
-  // 模式可用性
-  $: modeAvailability = aiModes.reduce((acc, mode) => {
-    acc[mode.value] = mode.requiresText ? isTextModelConfigured : true;
-    return acc;
-  }, {});
-
   // 当前提供商
   $: currentProvider = providers.find(p => p.id === config?.text_model?.provider) || providers[0];
   $: requiresApiKey = currentProvider?.requires_api_key ?? true;

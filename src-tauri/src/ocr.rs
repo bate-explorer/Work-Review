@@ -2,10 +2,14 @@
 // Windows: 使用 PaddleOCR (轻量化版本)
 // macOS: 使用 Vision 框架
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const OCR_COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// OCR 结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +183,41 @@ if __name__ == "__main__":
         Ok(())
     }
 
+    fn run_command_with_timeout(command: &mut Command, context: &str) -> Result<Output> {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = command
+            .spawn()
+            .map_err(|e| AppError::Unknown(format!("{context} 启动失败: {e}")))?;
+        let started_at = Instant::now();
+
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    return child
+                        .wait_with_output()
+                        .map_err(|e| AppError::Unknown(format!("{context} 读取输出失败: {e}")));
+                }
+                Ok(None) if started_at.elapsed() < OCR_COMMAND_TIMEOUT => {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(AppError::Unknown(format!(
+                        "{context} 执行超时（>{}s）",
+                        OCR_COMMAND_TIMEOUT.as_secs()
+                    )));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(AppError::Unknown(format!("{context} 等待进程失败: {e}")));
+                }
+            }
+        }
+    }
+
     /// 获取 Python 路径（优先使用 work_review conda 环境）
     fn get_python_path() -> String {
         // 优先检查 work_review conda 环境
@@ -256,10 +295,10 @@ if __name__ == "__main__":
         let python_cmd = Self::get_python_path();
 
         // 调用 Python 脚本
-        let output = Command::new(&python_cmd)
-            .arg(script_path)
-            .arg(image_path)
-            .output();
+        let output = Self::run_command_with_timeout(
+            Command::new(&python_cmd).arg(script_path).arg(image_path),
+            "PaddleOCR",
+        );
 
         match output {
             Ok(result) if result.status.success() => {
@@ -486,9 +525,7 @@ try {{
     Write-OcrError $message
 }}
 "#,
-            image_path
-                .to_string_lossy()
-                .replace("'", "''")
+            image_path.to_string_lossy().replace("'", "''")
         );
 
         let script_name = format!(
@@ -512,17 +549,19 @@ try {{
             return Ok(None);
         }
 
-        let output = Command::new(&powershell_path)
-            .args([
-                "-NoProfile",
-                "-Sta",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                script_path.to_string_lossy().as_ref(),
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
+        let output = Self::run_command_with_timeout(
+            Command::new(&powershell_path)
+                .args([
+                    "-NoProfile",
+                    "-Sta",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    script_path.to_string_lossy().as_ref(),
+                ])
+                .creation_flags(CREATE_NO_WINDOW),
+            "Windows OCR",
+        );
 
         let _ = std::fs::remove_file(&script_path);
 
@@ -630,12 +669,14 @@ return outputText
             image_path.to_string_lossy()
         );
 
-        let output = Command::new("osascript")
-            .arg("-l")
-            .arg("AppleScript")
-            .arg("-e")
-            .arg(&script)
-            .output();
+        let output = Self::run_command_with_timeout(
+            Command::new("osascript")
+                .arg("-l")
+                .arg("AppleScript")
+                .arg("-e")
+                .arg(&script),
+            "Vision OCR",
+        );
 
         match output {
             Ok(result) if result.status.success() => {
@@ -668,9 +709,10 @@ return outputText
     /// 检查 PaddleOCR 是否可用
     pub fn check_paddle_available() -> bool {
         let python_cmd = Self::get_python_path();
-        let output = Command::new(&python_cmd)
-            .args(["-c", "import paddleocr; print('ok')"])
-            .output();
+        let output = Self::run_command_with_timeout(
+            Command::new(&python_cmd).args(["-c", "import paddleocr; print('ok')"]),
+            "PaddleOCR 可用性检查",
+        );
 
         match output {
             Ok(result) => {

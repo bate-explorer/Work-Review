@@ -76,26 +76,26 @@
 
     <!-- 录制状态 -->
     <div class="sidebar-status">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span class="relative flex h-2 w-2">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="relative flex h-2.5 w-2.5">
             {#if isRecording && !isPaused}
               <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
             {:else}
-              <span class="relative inline-flex rounded-full h-2 w-2 bg-slate-300 dark:bg-slate-600"></span>
+              <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-300 dark:bg-slate-600"></span>
             {/if}
           </span>
-          <span class="text-xs text-slate-500 dark:text-slate-400">
-            {#if isPaused}已暂停{:else if isRecording}录制中{:else}未启动{/if}
+          <span class="text-[12px] font-semibold tracking-[0.08em] text-slate-500 dark:text-slate-400">
+            记录状态
           </span>
         </div>
         <button
           on:click={toggleRecording}
-          class="px-2 py-0.5 text-[10px] font-medium rounded-md transition-all
+          class="mt-0.5 shrink-0 px-3 py-1.5 text-[11px] font-semibold rounded-full transition-all
             {isPaused 
-              ? 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400' 
-              : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-400'}"
+              ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300' 
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'}"
         >
           {#if isPaused}恢复{:else}暂停{/if}
         </button>

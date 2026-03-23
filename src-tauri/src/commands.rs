@@ -1,6 +1,10 @@
 use crate::config::{AiProvider, AiProviderConfig, AppConfig, ModelConfig};
+use crate::database::Database;
 use crate::database::{Activity, DailyReport, DailyStats, MemorySearchItem};
 use crate::error::AppError;
+use crate::privacy::PrivacyFilter;
+use crate::screenshot::ScreenshotService;
+use crate::storage::StorageManager;
 use crate::work_intelligence::{
     analyze_intents, build_work_sessions, extract_todos,
     generate_weekly_review as build_weekly_review, IntentAnalysisResult, TodoExtractionResult,
@@ -9,7 +13,7 @@ use crate::work_intelligence::{
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::State;
@@ -23,6 +27,14 @@ const UPDATER_JSON_ENDPOINTS: &[&str] = &[
     "https://github.com/wm94i/Work_Review/releases/latest/download/updater.json",
 ];
 const DEFAULT_UPDATE_CHECK_INTERVAL_HOURS: u64 = 24;
+const MANAGED_DATA_ENTRIES: &[&str] = &[
+    "config.json",
+    "workreview.db",
+    "screenshots",
+    "ocr_logs",
+    "background.jpg",
+    "update_settings.json",
+];
 
 /// 模型测试结果
 #[derive(Serialize, Deserialize, Debug)]
@@ -460,8 +472,7 @@ fn detect_assistant_tools_with_history(
     let current_tools = detect_assistant_tools(question);
 
     // 如果当前问题已命中具体工具（不只是默认的 Memory），直接用，避免历史污染
-    let only_default_memory =
-        current_tools.len() == 1 && current_tools[0] == AssistantTool::Memory;
+    let only_default_memory = current_tools.len() == 1 && current_tools[0] == AssistantTool::Memory;
     if !only_default_memory {
         return current_tools;
     }
@@ -572,7 +583,11 @@ fn build_assistant_prompt(
     if !recent_history.is_empty() {
         prompt.push_str("\n【对话上下文】\n");
         for msg in recent_history.into_iter().rev() {
-            let role_label = if msg.role == "user" { "用户" } else { "助手" };
+            let role_label = if msg.role == "user" {
+                "用户"
+            } else {
+                "助手"
+            };
             let content = msg.content.trim();
             let short = if content.chars().count() > 200 {
                 format!("{}…", content.chars().take(200).collect::<String>())
@@ -620,6 +635,183 @@ fn build_assistant_prompt(
     prompt
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FallbackAnswerMode {
+    Todos,
+    Sessions,
+    Intents,
+    Memory,
+    Overview,
+}
+
+fn detect_fallback_answer_mode(question: &str) -> FallbackAnswerMode {
+    let normalized = question.trim().to_lowercase();
+
+    if ["待办", "todo", "跟进", "后续", "下一步", "next step"]
+        .iter()
+        .any(|pattern| normalized.contains(pattern))
+    {
+        return FallbackAnswerMode::Todos;
+    }
+
+    if ["session", "工作段", "时间段", "时段", "连续", "切换"]
+        .iter()
+        .any(|pattern| normalized.contains(pattern))
+    {
+        return FallbackAnswerMode::Sessions;
+    }
+
+    if [
+        "主要做了什么",
+        "最近在做什么",
+        "重心",
+        "方向",
+        "主要工作",
+        "复盘",
+        "总结",
+        "汇总",
+        "本周",
+        "上周",
+        "这周",
+    ]
+    .iter()
+    .any(|pattern| normalized.contains(pattern))
+    {
+        return FallbackAnswerMode::Intents;
+    }
+
+    if [
+        "什么时候",
+        "哪里",
+        "哪个",
+        "谁",
+        "记录",
+        "ocr",
+        "网页",
+        "链接",
+        "url",
+    ]
+    .iter()
+    .any(|pattern| normalized.contains(pattern))
+    {
+        return FallbackAnswerMode::Memory;
+    }
+
+    FallbackAnswerMode::Overview
+}
+
+fn build_reference_line(item: &MemorySearchItem) -> String {
+    let mut line = format!("- **{}**（{}）", item.title, item.date);
+    if let Some(app) = &item.app_name {
+        if !app.is_empty() {
+            line.push_str(&format!("，{app}"));
+        }
+    }
+    if !item.excerpt.is_empty() {
+        let short_excerpt: String = item.excerpt.chars().take(80).collect();
+        line.push_str(&format!("：{short_excerpt}"));
+        if item.excerpt.chars().count() > 80 {
+            line.push('…');
+        }
+    }
+    line
+}
+
+fn append_reference_section(answer: &mut String, references: &[MemorySearchItem], title: &str) {
+    if references.is_empty() {
+        return;
+    }
+
+    answer.push_str(title);
+    answer.push_str("\n\n");
+    for item in references.iter().take(5) {
+        answer.push_str(&build_reference_line(item));
+        answer.push('\n');
+    }
+    answer.push('\n');
+}
+
+fn append_session_section(answer: &mut String, sessions: &[WorkSession], title: &str) {
+    if sessions.is_empty() {
+        return;
+    }
+
+    answer.push_str(title);
+    answer.push_str("\n\n");
+    for session in sessions.iter().take(5) {
+        answer.push_str(&format!(
+            "- **{}**：{}，主要使用 {}（{}）\n",
+            session.title,
+            crate::analysis::format_duration(session.duration),
+            session.dominant_app,
+            session.intent_label
+        ));
+    }
+    answer.push('\n');
+}
+
+fn append_intent_section(answer: &mut String, intents: &IntentAnalysisResult, title: &str) {
+    if intents.summary.is_empty() {
+        return;
+    }
+
+    answer.push_str(title);
+    answer.push_str("\n\n");
+    for item in intents.summary.iter().take(5) {
+        answer.push_str(&format!(
+            "- **{}**：{}，{} 段\n",
+            item.label,
+            crate::analysis::format_duration(item.duration),
+            item.session_count
+        ));
+    }
+    answer.push('\n');
+}
+
+fn append_todo_section(answer: &mut String, todos: &TodoExtractionResult, title: &str) {
+    if todos.items.is_empty() {
+        return;
+    }
+
+    answer.push_str(title);
+    answer.push_str("\n\n");
+    for item in todos.items.iter().take(8) {
+        answer.push_str(&format!(
+            "- **{}**（{}，{}）\n",
+            item.title, item.date, item.reason
+        ));
+    }
+    answer.push('\n');
+}
+
+fn append_review_section(answer: &mut String, review: &WeeklyReviewResult) {
+    answer.push_str("## 阶段概览\n\n");
+    answer.push_str(&format!(
+        "- 总投入：{}\n- 活跃天数：{} 天\n- Session 数：{}\n- 深度工作段：{}\n",
+        crate::analysis::format_duration(review.total_duration),
+        review.active_days,
+        review.session_count,
+        review.deep_work_sessions
+    ));
+    answer.push('\n');
+
+    if !review.highlights.is_empty() {
+        answer.push_str("## 重点工作\n\n");
+        for item in review.highlights.iter().take(4) {
+            answer.push_str(&format!("- {}\n", item));
+        }
+        answer.push('\n');
+    }
+
+    if !review.risks.is_empty() {
+        answer.push_str("## 风险与提醒\n\n");
+        for item in review.risks.iter().take(3) {
+            answer.push_str(&format!("- {}\n", item));
+        }
+        answer.push('\n');
+    }
+}
+
 fn build_fallback_assistant_answer(
     question: &str,
     references: &[MemorySearchItem],
@@ -642,80 +834,123 @@ fn build_fallback_assistant_answer(
     }
 
     let mut answer = String::new();
+    let requested_mode = detect_fallback_answer_mode(question);
+    let effective_mode = match requested_mode {
+        FallbackAnswerMode::Todos if has_todos => FallbackAnswerMode::Todos,
+        FallbackAnswerMode::Sessions if has_sessions => FallbackAnswerMode::Sessions,
+        FallbackAnswerMode::Intents if has_intents || has_review => FallbackAnswerMode::Intents,
+        FallbackAnswerMode::Memory if has_refs => FallbackAnswerMode::Memory,
+        _ if has_todos => FallbackAnswerMode::Todos,
+        _ if has_intents || has_review => FallbackAnswerMode::Intents,
+        _ if has_sessions => FallbackAnswerMode::Sessions,
+        _ => FallbackAnswerMode::Memory,
+    };
 
-    if has_review || has_intents {
-        answer.push_str(&format!("## 关于\"{question}\"\n\n"));
+    answer.push_str("## 结论\n\n");
 
-        if let Some(review) = review {
-            answer.push_str(&review.markdown);
-            answer.push_str("\n\n");
+    match effective_mode {
+        FallbackAnswerMode::Todos => {
+            answer.push_str(
+                "从基础模板能直接提取到的待跟进事项看，当前更值得继续推进的是下面这些。\n\n",
+            );
+            if let Some(todos) = todos {
+                for item in todos.items.iter().take(3) {
+                    answer.push_str(&format!("- **{}**\n", item.title));
+                }
+                answer.push('\n');
+            }
         }
-
-        if let Some(intents) = intents {
-            if !intents.summary.is_empty() {
-                answer.push_str("## 主要工作方向\n\n");
-                for item in intents.summary.iter().take(5) {
+        FallbackAnswerMode::Sessions => {
+            answer
+                .push_str("按连续工作段看，和这次问题最相关的内容主要集中在下面几个 session。\n\n");
+            if let Some(sessions) = sessions {
+                for session in sessions.iter().take(3) {
                     answer.push_str(&format!(
-                        "- **{}**：{}，{} 段\n",
-                        item.label,
-                        crate::analysis::format_duration(item.duration),
-                        item.session_count
+                        "- **{}**：{}\n",
+                        session.title,
+                        crate::analysis::format_duration(session.duration)
                     ));
                 }
                 answer.push('\n');
             }
         }
-    } else if has_todos {
-        answer.push_str("## 待跟进事项\n\n");
-
-        if let Some(todos) = todos {
-            for item in todos.items.iter().take(8) {
-                answer.push_str(&format!(
-                    "- **{}**（{}，{}）\n",
-                    item.title, item.date, item.reason
-                ));
+        FallbackAnswerMode::Intents => {
+            if let Some(intents) = intents {
+                let summary = intents
+                    .summary
+                    .iter()
+                    .take(3)
+                    .map(|item| {
+                        format!(
+                            "{}（{}）",
+                            item.label,
+                            crate::analysis::format_duration(item.duration)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("、");
+                if !summary.is_empty() {
+                    answer.push_str(&format!(
+                        "从现有记录看，当前工作重心主要集中在 {summary}。\n\n"
+                    ));
+                } else {
+                    answer.push_str("从现有记录看，近期工作有比较明确的重心，下面给你展开。\n\n");
+                }
+            } else {
+                answer.push_str("从现有记录看，近期工作有比较明确的重心，下面给你展开。\n\n");
             }
-            answer.push('\n');
         }
-    } else if has_sessions {
-        answer.push_str("## 工作时间线\n\n");
-
-        if let Some(sessions) = sessions {
-            for session in sessions.iter().take(5) {
-                answer.push_str(&format!(
-                    "- **{}**：{}，主要使用 {}（{}）\n",
-                    session.title,
-                    crate::analysis::format_duration(session.duration),
-                    session.dominant_app,
-                    session.intent_label
-                ));
-            }
-            answer.push('\n');
+        FallbackAnswerMode::Memory => {
+            answer.push_str(&format!(
+                "基础模板下，和“{question}”最相关的是下面这些直接命中的记录。\n\n"
+            ));
         }
-    } else {
-        answer.push_str(&format!("## 关于\"{question}\"的相关记录\n\n"));
+        FallbackAnswerMode::Overview => {
+            answer.push_str(
+                "从现有记录看，近期工作有一些比较明确的重点，下面按概览和直接记录展开。\n\n",
+            );
+        }
     }
 
-    if has_refs {
-        if has_review || has_intents || has_todos || has_sessions {
-            answer.push_str("## 相关记录\n\n");
+    match effective_mode {
+        FallbackAnswerMode::Todos => {
+            if let Some(todos) = todos {
+                append_todo_section(&mut answer, todos, "## 待跟进事项");
+            }
+            append_reference_section(&mut answer, references, "## 相关记录");
         }
-        for item in references.iter().take(5) {
-            let mut line = format!("- **{}**（{}）", item.title, item.date);
-            if let Some(app) = &item.app_name {
-                if !app.is_empty() {
-                    line.push_str(&format!("，{app}"));
-                }
+        FallbackAnswerMode::Sessions => {
+            if let Some(sessions) = sessions {
+                append_session_section(&mut answer, sessions, "## 代表性 Session");
             }
-            if !item.excerpt.is_empty() {
-                let short_excerpt: String = item.excerpt.chars().take(80).collect();
-                line.push_str(&format!("：{short_excerpt}"));
-                if item.excerpt.chars().count() > 80 {
-                    line.push('…');
-                }
+            append_reference_section(&mut answer, references, "## 相关记录");
+        }
+        FallbackAnswerMode::Intents => {
+            if let Some(review) = review {
+                append_review_section(&mut answer, review);
             }
-            line.push('\n');
-            answer.push_str(&line);
+            if let Some(intents) = intents {
+                append_intent_section(&mut answer, intents, "## 主要工作方向");
+            }
+            append_reference_section(&mut answer, references, "## 相关记录");
+        }
+        FallbackAnswerMode::Memory => {
+            append_reference_section(&mut answer, references, "## 相关记录");
+            if let Some(sessions) = sessions {
+                append_session_section(&mut answer, sessions, "## 可能相关的工作段");
+            }
+        }
+        FallbackAnswerMode::Overview => {
+            if let Some(review) = review {
+                append_review_section(&mut answer, review);
+            }
+            if let Some(intents) = intents {
+                append_intent_section(&mut answer, intents, "## 主要工作方向");
+            }
+            if let Some(sessions) = sessions {
+                append_session_section(&mut answer, sessions, "## 代表性 Session");
+            }
+            append_reference_section(&mut answer, references, "## 相关记录");
         }
     }
 
@@ -1692,9 +1927,10 @@ pub async fn save_config(
 
     // 更新配置
     state.config = config.clone();
+    state.storage_manager.update_config(config.storage.clone());
 
     // 保存到文件
-    let config_path = state.data_dir.join("config.json");
+    let config_path = state.config_path.clone();
     config.save(&config_path)?;
 
     // 更新隐私过滤器
@@ -2166,6 +2402,150 @@ pub async fn get_recording_state(
 pub async fn get_data_dir(state: State<'_, Arc<Mutex<AppState>>>) -> Result<String, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
     Ok(state.data_dir.to_string_lossy().to_string())
+}
+
+/// 获取默认数据目录
+#[tauri::command]
+pub async fn get_default_data_dir() -> Result<String, AppError> {
+    Ok(crate::default_data_dir().to_string_lossy().to_string())
+}
+
+fn is_ignorable_dir_entry(name: &str) -> bool {
+    name.starts_with('.') || name == "Thumbs.db"
+}
+
+fn is_managed_dir_entry(name: &str) -> bool {
+    MANAGED_DATA_ENTRIES.contains(&name)
+}
+
+fn to_absolute_path(path: &Path) -> Result<PathBuf, AppError> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn ensure_target_dir_ready(target_dir: &Path) -> Result<bool, AppError> {
+    std::fs::create_dir_all(target_dir)?;
+
+    let mut has_existing_app_data = false;
+
+    for entry in std::fs::read_dir(target_dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+
+        if is_ignorable_dir_entry(&name) {
+            continue;
+        }
+
+        if !is_managed_dir_entry(&name) {
+            return Err(AppError::Config(format!(
+                "目标目录包含非 Work Review 数据（{}），为避免误覆盖，请选择空目录或旧的数据目录",
+                name
+            )));
+        }
+
+        has_existing_app_data = true;
+    }
+
+    if !has_existing_app_data {
+        return Ok(false);
+    }
+
+    // 目标目录若已存在旧版应用数据，先清空受管条目，再完整覆盖为当前数据。
+    for entry_name in MANAGED_DATA_ENTRIES {
+        let path = target_dir.join(entry_name);
+        if !path.exists() {
+            continue;
+        }
+
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+
+    Ok(true)
+}
+
+/// 切换数据目录，并迁移当前数据
+#[tauri::command]
+pub async fn change_data_dir(
+    target_dir: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<serde_json::Value, AppError> {
+    let requested_dir = target_dir.trim();
+    if requested_dir.is_empty() {
+        return Err(AppError::Config("目标目录不能为空".to_string()));
+    }
+
+    let requested_path = to_absolute_path(Path::new(requested_dir))?;
+    let current_dir = {
+        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        state
+            .data_dir
+            .canonicalize()
+            .unwrap_or_else(|_| state.data_dir.clone())
+    };
+
+    if requested_path == current_dir {
+        return Ok(serde_json::json!({
+            "dataDir": current_dir.to_string_lossy().to_string(),
+            "copiedFiles": 0,
+            "message": "数据目录未变化",
+        }));
+    }
+
+    if requested_path.starts_with(&current_dir) || current_dir.starts_with(&requested_path) {
+        return Err(AppError::Config(
+            "新旧数据目录不能互为父子目录，请选择独立目录".to_string(),
+        ));
+    }
+
+    let target_dir = {
+        std::fs::create_dir_all(&requested_path)?;
+        requested_path
+            .canonicalize()
+            .unwrap_or_else(|_| requested_path.clone())
+    };
+
+    let replaced_existing_data = ensure_target_dir_ready(&target_dir)?;
+    let copied_files = crate::copy_dir_contents(&current_dir, &target_dir, true)?;
+
+    let mut state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+    let config = state.config.clone();
+    let config_path = target_dir.join("config.json");
+    config.save(&config_path)?;
+
+    let database = Database::new(&target_dir.join("workreview.db"))?;
+    let privacy_filter = PrivacyFilter::from_config(&config.privacy);
+    let screenshot_service = ScreenshotService::new(&target_dir);
+    let storage_manager = StorageManager::new(&target_dir, config.storage.clone());
+
+    crate::save_data_dir_preference(&target_dir)?;
+
+    state.database = database;
+    state.privacy_filter = privacy_filter;
+    state.screenshot_service = screenshot_service;
+    state.storage_manager = storage_manager;
+    state.data_dir = target_dir.clone();
+    state.config_path = config_path;
+
+    log::info!("数据目录已切换到: {:?}", target_dir);
+
+    Ok(serde_json::json!({
+        "dataDir": target_dir.to_string_lossy().to_string(),
+        "copiedFiles": copied_files,
+        "replacedExistingData": replaced_existing_data,
+        "message": format!(
+            "数据目录已更新，已迁移 {} 个文件{}",
+            copied_files,
+            if replaced_existing_data { "，并覆盖旧目录中的 Work Review 数据" } else { "" }
+        ),
+    }))
 }
 
 /// 基于 updater.json 优先检查更新；若自动更新元数据暂未就绪，则回退到 GitHub Release API。

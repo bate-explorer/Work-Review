@@ -5,6 +5,7 @@ export const BASIC_ASSISTANT_MODEL_ID = '__basic__';
 const STORAGE_KEY = 'work-review-assistant-state';
 const DEFAULT_STATE = {
   messages: [],
+  selectedModelId: BASIC_ASSISTANT_MODEL_ID,
 };
 
 function loadState() {
@@ -21,6 +22,10 @@ function loadState() {
     const parsed = JSON.parse(raw);
     return {
       messages: Array.isArray(parsed?.messages) ? parsed.messages : [],
+      selectedModelId:
+        typeof parsed?.selectedModelId === 'string' && parsed.selectedModelId.trim()
+          ? parsed.selectedModelId
+          : BASIC_ASSISTANT_MODEL_ID,
     };
   } catch (error) {
     console.warn('加载助手会话缓存失败:', error);
@@ -58,6 +63,14 @@ function createAssistantStore() {
       update((state) => ({
         ...state,
         messages: [],
+      })),
+    setSelectedModelId: (selectedModelId) =>
+      update((state) => ({
+        ...state,
+        selectedModelId:
+          typeof selectedModelId === 'string' && selectedModelId.trim()
+            ? selectedModelId
+            : BASIC_ASSISTANT_MODEL_ID,
       })),
     setMessages: (messages) =>
       update((state) => ({

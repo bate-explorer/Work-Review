@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "SF Pro Display", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI Variable Text", "Microsoft YaHei", sans-serif;
   font-size: 15px;
   line-height: 1.6;
   font-weight: 400;
@@ -123,23 +123,32 @@
 }
 
 .page-shell {
-  @apply px-5 pt-4 pb-4 animate-fadeIn;
+  @apply px-5 pt-5 pb-5 animate-fadeIn relative;
 }
 
 .page-header {
-  @apply flex items-start justify-between gap-3 mb-4;
+  @apply flex flex-wrap items-start justify-between gap-4 mb-5;
 }
 
 .page-title-group {
-  @apply flex items-start gap-2.5 min-w-0;
+  @apply flex items-start gap-3 min-w-0;
 }
 
 .page-title-badge {
-  @apply w-10 h-10 rounded-xl border border-slate-200/70 dark:border-slate-700/70 bg-white/80 dark:bg-slate-800/80 shadow-sm flex items-center justify-center text-indigo-600 dark:text-indigo-300;
+  @apply w-11 h-11 rounded-2xl border border-white/80 dark:border-slate-700/70 shadow-[0_10px_30px_rgba(99,102,241,0.16)] dark:shadow-[0_12px_32px_rgba(15,23,42,0.45)] flex items-center justify-center text-indigo-600 dark:text-indigo-300;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.95), rgba(238, 242, 255, 0.92)),
+    linear-gradient(135deg, rgba(224, 231, 255, 0.85), rgba(255, 255, 255, 0.9));
 }
 
 .page-title-badge svg {
   @apply w-5 h-5;
+}
+
+.dark .page-title-badge {
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.22), rgba(30, 41, 59, 0.92)),
+    linear-gradient(135deg, rgba(49, 46, 129, 0.6), rgba(15, 23, 42, 0.94));
 }
 
 .page-title-copy {
@@ -147,27 +156,49 @@
 }
 
 .page-title-copy h2 {
-  @apply text-xl font-bold text-slate-800 dark:text-white;
+  @apply text-[1.55rem] font-semibold text-slate-900 dark:text-white tracking-tight;
 }
 
 .page-title-copy p {
-  @apply text-sm text-slate-400 dark:text-slate-500 mt-0.5 leading-none;
+  @apply text-[13px] text-slate-500 dark:text-slate-400 mt-1 leading-5;
 }
 
 .page-card {
-  @apply rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-100 dark:border-slate-700/60 p-5;
+  @apply rounded-[26px] border border-white/75 dark:border-slate-700/60 p-5 backdrop-blur-xl;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow:
+    0 16px 40px rgba(15, 23, 42, 0.06),
+    0 2px 10px rgba(15, 23, 42, 0.04);
 }
 
 .page-card-soft {
-  @apply rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-100 dark:border-slate-700/60 p-5 text-center;
+  @apply rounded-[26px] border border-white/75 dark:border-slate-700/60 p-5 text-center backdrop-blur-xl;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow:
+    0 16px 40px rgba(15, 23, 42, 0.06),
+    0 2px 10px rgba(15, 23, 42, 0.04);
+}
+
+.dark .page-card,
+.dark .page-card-soft {
+  background: rgba(15, 23, 42, 0.72);
 }
 
 .page-tabs {
-  @apply flex gap-1 mb-4 p-1 bg-slate-100/50 dark:bg-slate-800/50 rounded-xl;
+  @apply flex gap-1.5 mb-4 p-1.5 rounded-2xl;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(241, 245, 249, 0.82));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.dark .page-tabs {
+  background:
+    linear-gradient(180deg, rgba(30, 41, 59, 0.82), rgba(15, 23, 42, 0.78));
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.08);
 }
 
 .page-tab-btn {
-  @apply flex-1 min-h-9 flex items-center justify-center gap-1.5 px-2 rounded-lg text-xs font-medium leading-none transition-all duration-200;
+  @apply flex-1 min-h-10 flex items-center justify-center gap-1.5 px-3 rounded-xl text-xs font-medium leading-none transition-all duration-200;
 }
 
 .page-toolbar {
@@ -195,7 +226,7 @@
 }
 
 .page-action-btn {
-  @apply inline-flex items-center justify-center gap-2 min-h-10 px-4 py-2 text-sm font-medium rounded-xl transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed;
+  @apply inline-flex items-center justify-center gap-2 min-h-10 px-4 py-2 text-sm font-medium rounded-2xl transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 .page-action-brand {
@@ -219,7 +250,7 @@
 }
 
 .page-inline-chip {
-  @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium;
+  @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium;
 }
 
 .page-inline-chip-brand {
@@ -239,15 +270,16 @@
 }
 
 .page-banner {
-  @apply rounded-xl border px-4 py-3 flex items-start justify-between gap-3;
+  @apply rounded-2xl border px-4 py-3.5 flex items-start justify-between gap-3 backdrop-blur-sm;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.04);
 }
 
 .page-banner-error {
-  @apply page-banner bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-900/40 text-red-700 dark:text-red-400;
+  @apply page-banner bg-red-50 dark:bg-red-950/30 border-red-100 dark:border-red-900/40 text-red-700 dark:text-red-400;
 }
 
 .page-banner-warning {
-  @apply page-banner bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400;
+  @apply page-banner bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400;
 }
 
 .sidebar-top {
@@ -267,7 +299,14 @@
 }
 
 .sidebar-status {
-  @apply min-h-[48px] rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2;
+  @apply rounded-2xl border border-white/70 dark:border-slate-700/70 px-3 py-2.5 shadow-sm;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(241, 245, 249, 0.8));
+}
+
+.dark .sidebar-status {
+  background:
+    linear-gradient(180deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.82));
 }
 
 .sidebar-main {
@@ -283,15 +322,26 @@
 }
 
 .sidebar-nav-item {
-  @apply relative flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150;
+  @apply relative flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-sm transition-all duration-150;
 }
 
 .sidebar-nav-item-active {
-  @apply bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 pl-4;
+  @apply text-indigo-700 dark:text-indigo-200 pl-4 shadow-sm;
+  background:
+    linear-gradient(135deg, rgba(224, 231, 255, 0.92), rgba(255, 255, 255, 0.92));
+}
+
+.dark .sidebar-nav-item-active {
+  background:
+    linear-gradient(135deg, rgba(49, 46, 129, 0.6), rgba(30, 41, 59, 0.9));
 }
 
 .sidebar-nav-item-idle {
-  @apply text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60;
+  @apply text-slate-500 dark:text-slate-400 hover:bg-white/70 dark:hover:bg-slate-800/70;
+}
+
+.sidebar-nav-item:hover {
+  transform: translateX(1px);
 }
 
 .sidebar-nav-label {
@@ -311,7 +361,7 @@
 }
 
 .sidebar-nav-rail {
-  @apply absolute left-1.5 top-1/2 -translate-y-1/2 w-[2px] h-4 rounded-full bg-indigo-500;
+  @apply absolute left-1.5 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-full bg-indigo-500;
 }
 
 .sidebar-bottom {
@@ -331,23 +381,45 @@
 }
 
 .empty-state {
-  @apply page-card-soft py-8;
+  @apply page-card-soft py-9;
+  background:
+    radial-gradient(circle at top, rgba(224, 231, 255, 0.55), rgba(255, 255, 255, 0.88) 48%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
+}
+
+.dark .empty-state {
+  background:
+    radial-gradient(circle at top, rgba(79, 70, 229, 0.16), rgba(15, 23, 42, 0.94) 48%),
+    linear-gradient(180deg, rgba(30, 41, 59, 0.86), rgba(15, 23, 42, 0.92));
 }
 
 .empty-state-lg {
-  @apply page-card-soft py-10;
+  @apply page-card-soft py-12;
+  background:
+    radial-gradient(circle at top, rgba(224, 231, 255, 0.6), rgba(255, 255, 255, 0.9) 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.94));
+}
+
+.dark .empty-state-lg {
+  background:
+    radial-gradient(circle at top, rgba(79, 70, 229, 0.2), rgba(15, 23, 42, 0.94) 42%),
+    linear-gradient(180deg, rgba(30, 41, 59, 0.88), rgba(15, 23, 42, 0.94));
+}
+
+.empty-state-compact {
+  @apply rounded-2xl border border-dashed border-slate-200/90 dark:border-slate-700/80 bg-slate-50/80 dark:bg-slate-800/30 px-5 py-7 text-center;
 }
 
 .empty-state-icon {
-  @apply inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-slate-50 dark:bg-slate-700/50 mx-auto mb-4;
+  @apply inline-flex items-center justify-center w-16 h-16 rounded-[22px] bg-white/90 dark:bg-slate-800/80 mx-auto mb-4 ring-1 ring-slate-200/80 dark:ring-slate-700/70 shadow-[0_16px_30px_rgba(99,102,241,0.10)];
 }
 
 .empty-state-title {
-  @apply text-base font-semibold text-slate-800 dark:text-white mb-2;
+  @apply text-lg font-semibold text-slate-900 dark:text-white mb-2 tracking-tight;
 }
 
 .empty-state-copy {
-  @apply text-sm text-slate-400 dark:text-slate-500;
+  @apply text-sm text-slate-500 dark:text-slate-400 leading-6;
 }
 
 .settings-card-title {

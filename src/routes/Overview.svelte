@@ -5,7 +5,7 @@
   import StatsCard from '../lib/components/StatsCard.svelte';
   import AppUsageChart from '../lib/components/AppUsageChart.svelte';
   import { cache } from '../lib/stores/cache.js';
-  import { appIconStore, loadAppIcon, preloadAppIcons } from '../lib/stores/iconCache.js';
+  import { appIconStore, preloadAppIcons } from '../lib/stores/iconCache.js';
   import { resolveAppIconSrc } from '../lib/utils/appVisuals.js';
 
   let stats = null;
@@ -16,9 +16,9 @@
   let clockInterval;
   let refreshInterval;
   let handleActivityAdded;
+  let overviewRefreshPromise = null;
+  let overviewRequestId = 0;
   
-  let selectedDomain = null;
-  // 记录每个域名是否展开全部 URL（key: domain.domain）
   let expandedDomains = new Set();
   
   // 浏览器统计弹窗
@@ -54,6 +54,36 @@
     return resolveAppIconSrc(appName, appIcons[appName]);
   }
 
+  async function refreshOverviewStats({ silent = false } = {}) {
+    if (overviewRefreshPromise) {
+      return overviewRefreshPromise;
+    }
+
+    const requestId = ++overviewRequestId;
+    overviewRefreshPromise = invoke('get_today_stats')
+      .then((newStats) => {
+        if (requestId !== overviewRequestId) {
+          return;
+        }
+        stats = newStats;
+        cache.setOverview(newStats);
+        error = null;
+      })
+      .catch((e) => {
+        if (silent) {
+          console.warn('后台刷新失败:', e);
+          return;
+        }
+        error = e.toString();
+      })
+      .finally(() => {
+        overviewRefreshPromise = null;
+        loading = false;
+      });
+
+    return overviewRefreshPromise;
+  }
+
   async function loadStats(forceRefresh = false) {
     // 乐观更新策略：先显示缓存数据，后台刷新后再更新
     let cacheData;
@@ -69,28 +99,13 @@
       if (!forceRefresh && cache.isValid(cacheData.overview)) {
         return;
       }
-      
-      // 后台静默刷新（不显示 loading 状态）
-      try {
-        const newStats = await invoke('get_today_stats');
-        stats = newStats;
-        cache.setOverview(newStats);
-      } catch (e) {
-        // 静默刷新失败时不显示错误，继续使用缓存
-        console.warn('后台刷新失败:', e);
-      }
+
+      await refreshOverviewStats({ silent: true });
     } else {
       // 首次加载，显示 loading
       loading = true;
       error = null;
-      try {
-        stats = await invoke('get_today_stats');
-        cache.setOverview(stats);
-      } catch (e) {
-        error = e.toString();
-      } finally {
-        loading = false;
-      }
+      await refreshOverviewStats();
     }
   }
 
@@ -108,7 +123,7 @@
     }, 1000);
     
     // 监听 Tauri 截屏事件（后备）
-    unlisten = await listen('screenshot-taken', () => setTimeout(() => loadStats(true), 500));
+    unlisten = await listen('screenshot-taken', () => loadStats(true));
     
     // 监听全局 activity-added 事件（实时同步）
     handleActivityAdded = () => loadStats(true);
@@ -225,7 +240,10 @@
         {/each}
       </div>
     {:else}
-      <div class="flex items-center justify-center py-5">
+      <div class="empty-state-compact">
+        <div class="empty-state-icon !w-12 !h-12 !mb-3 shadow-none">
+          <span class="text-xl">🌐</span>
+        </div>
         <p class="empty-state-copy">今日暂无浏览器访问记录</p>
       </div>
     {/if}
@@ -247,7 +265,12 @@
     {:else if stats.app_usage.length > 0}
       <AppUsageChart data={stats.app_usage} />
     {:else}
-      <p class="empty-state-copy text-center py-5">暂无数据</p>
+      <div class="empty-state-compact">
+        <div class="empty-state-icon !w-12 !h-12 !mb-3 shadow-none">
+          <span class="text-xl">📊</span>
+        </div>
+        <p class="empty-state-copy">暂无应用统计数据</p>
+      </div>
     {/if}
   </div>
 </div>

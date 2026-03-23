@@ -109,14 +109,6 @@ impl ScreenshotService {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn with_config(data_dir: &Path, config: ScreenshotConfig) -> Self {
-        Self {
-            data_dir: data_dir.to_path_buf(),
-            config,
-        }
-    }
-
     /// 执行截屏（Windows）
     /// 优先使用 Windows Graphics Capture API (Win11)
     /// 失败时降级使用 GDI BitBlt (Win10 兼容)

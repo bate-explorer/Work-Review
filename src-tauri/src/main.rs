@@ -27,7 +27,8 @@ use database::Database;
 use once_cell::sync::OnceCell;
 use privacy::PrivacyFilter;
 use screenshot::ScreenshotService;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage::StorageManager;
@@ -51,19 +52,93 @@ pub struct AppState {
     pub is_paused: bool,
 }
 
-/// 获取数据目录
-fn get_data_dir() -> PathBuf {
-    let preferred_dir = dirs::data_dir()
-        .map(|d| d.join("work-review"))
-        .unwrap_or_else(|| PathBuf::from("./data"));
+#[derive(Serialize, Deserialize)]
+struct DataDirPreference {
+    data_dir: String,
+}
 
-    if let Err(error) = std::fs::create_dir_all(&preferred_dir) {
-        log::warn!("创建稳定数据目录失败，回退当前目录: {error}");
-        return PathBuf::from("./data");
+pub(crate) fn default_data_dir() -> PathBuf {
+    dirs::data_dir()
+        .map(|d| d.join("work-review"))
+        .unwrap_or_else(|| PathBuf::from("./data"))
+}
+
+fn data_dir_preference_path() -> PathBuf {
+    dirs::config_dir()
+        .map(|d| d.join("work-review").join("data-location.json"))
+        .unwrap_or_else(|| PathBuf::from("./work-review-data-location.json"))
+}
+
+fn load_data_dir_preference() -> Option<PathBuf> {
+    let path = data_dir_preference_path();
+    let content = std::fs::read_to_string(path).ok()?;
+    let preference: DataDirPreference = serde_json::from_str(&content).ok()?;
+    let data_dir = preference.data_dir.trim();
+    if data_dir.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(data_dir))
+    }
+}
+
+pub(crate) fn save_data_dir_preference(data_dir: &Path) -> std::io::Result<()> {
+    let default_dir = default_data_dir();
+    let preference_path = data_dir_preference_path();
+
+    if data_dir == default_dir {
+        if preference_path.exists() {
+            std::fs::remove_file(preference_path)?;
+        }
+        return Ok(());
     }
 
-    migrate_legacy_data_dir(&preferred_dir);
-    preferred_dir
+    if let Some(parent) = preference_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let content = serde_json::to_string_pretty(&DataDirPreference {
+        data_dir: data_dir.to_string_lossy().to_string(),
+    })
+    .map_err(std::io::Error::other)?;
+
+    std::fs::write(preference_path, content)?;
+    Ok(())
+}
+
+fn ensure_data_dir(path: &Path) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(path)?;
+    Ok(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+}
+
+/// 获取数据目录
+fn resolve_data_dir() -> PathBuf {
+    let default_dir = default_data_dir();
+    let preferred_dir = load_data_dir_preference().unwrap_or_else(|| default_dir.clone());
+
+    match ensure_data_dir(&preferred_dir) {
+        Ok(dir) => {
+            migrate_legacy_data_dir(&dir);
+            dir
+        }
+        Err(error) => {
+            log::warn!("创建数据目录失败，回退默认目录: {error}");
+
+            if preferred_dir != default_dir {
+                if let Ok(dir) = ensure_data_dir(&default_dir) {
+                    migrate_legacy_data_dir(&dir);
+                    let _ = save_data_dir_preference(&dir);
+                    return dir;
+                }
+            }
+
+            let fallback_dir = PathBuf::from("./data");
+            if let Err(fallback_error) = std::fs::create_dir_all(&fallback_dir) {
+                log::warn!("创建兜底数据目录失败: {fallback_error}");
+            }
+            migrate_legacy_data_dir(&fallback_dir);
+            fallback_dir
+        }
+    }
 }
 
 fn migrate_legacy_data_dir(target_dir: &PathBuf) {
@@ -86,15 +161,20 @@ fn migrate_legacy_data_dir(target_dir: &PathBuf) {
         return;
     }
 
-    if let Err(error) = copy_dir_if_missing(&legacy_dir, target_dir) {
+    if let Err(error) = copy_dir_contents(&legacy_dir, target_dir, false) {
         log::warn!("迁移旧版数据目录失败: {error}");
     } else {
         log::info!("已将旧版数据目录迁移到稳定目录: {:?}", target_dir);
     }
 }
 
-fn copy_dir_if_missing(from: &std::path::Path, to: &std::path::Path) -> Result<(), std::io::Error> {
+pub(crate) fn copy_dir_contents(
+    from: &Path,
+    to: &Path,
+    overwrite_existing: bool,
+) -> Result<u64, std::io::Error> {
     std::fs::create_dir_all(to)?;
+    let mut copied_files = 0;
 
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
@@ -102,16 +182,17 @@ fn copy_dir_if_missing(from: &std::path::Path, to: &std::path::Path) -> Result<(
         let target_path = to.join(entry.file_name());
 
         if source_path.is_dir() {
-            copy_dir_if_missing(&source_path, &target_path)?;
+            copied_files += copy_dir_contents(&source_path, &target_path, overwrite_existing)?;
             continue;
         }
 
-        if !target_path.exists() {
+        if overwrite_existing || !target_path.exists() {
             std::fs::copy(&source_path, &target_path)?;
+            copied_files += 1;
         }
     }
 
-    Ok(())
+    Ok(copied_files)
 }
 
 /// 浏览器 URL 采集偶发失败时，尝试从最近同窗口标题的活动里恢复 URL。
@@ -1088,7 +1169,7 @@ async fn main() {
     log::info!("work回顾助手启动中...");
 
     // 获取数据目录
-    let data_dir = get_data_dir();
+    let data_dir = resolve_data_dir();
     log::info!("数据目录: {data_dir:?}");
 
     // 加载配置
@@ -1338,6 +1419,8 @@ async fn main() {
             commands::resume_recording,
             commands::get_recording_state,
             commands::get_data_dir,
+            commands::get_default_data_dir,
+            commands::change_data_dir,
             commands::check_github_update,
             commands::open_data_dir,
             commands::get_screenshot_thumbnail,

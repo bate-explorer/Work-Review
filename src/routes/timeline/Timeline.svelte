@@ -22,7 +22,6 @@
   let selectedDate = getLocalDateString();
   let selectedActivity = null;
   let unlisten = null;
-  let showSummary = false;
   let currentTime = new Date();
   let clockInterval;
 

@@ -1,10 +1,19 @@
-use crate::error::Result;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::error::AppError;
+use crate::error::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::process::{Command, Output, Stdio};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::thread;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::time::{Duration, Instant};
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const MONITOR_COMMAND_TIMEOUT: Duration = Duration::from_millis(1200);
 
 static URL_LIKE_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -12,6 +21,42 @@ static URL_LIKE_RE: Lazy<Regex> = Lazy::new(|| {
     )
     .expect("URL regex should compile")
 });
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn run_monitor_command_with_timeout(command: &mut Command, context: &str) -> Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| AppError::Unknown(format!("{context} 启动失败: {e}")))?;
+    let started_at = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|e| AppError::Unknown(format!("{context} 读取输出失败: {e}")));
+            }
+            Ok(None) if started_at.elapsed() < MONITOR_COMMAND_TIMEOUT => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(AppError::Unknown(format!(
+                    "{context} 执行超时（>{}ms）",
+                    MONITOR_COMMAND_TIMEOUT.as_millis()
+                )));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(AppError::Unknown(format!("{context} 等待进程失败: {e}")));
+            }
+        }
+    }
+}
 
 /// 活动窗口信息
 #[derive(Debug, Clone)]
@@ -86,9 +131,7 @@ pub fn normalize_display_app_name(app_name: &str) -> String {
 
     let normalized = trimmed.to_lowercase();
     match normalized.as_str() {
-        "work-review" | "work_review" | "workreview" | "work review" => {
-            "Work Review".to_string()
-        }
+        "work-review" | "work_review" | "workreview" | "work review" => "Work Review".to_string(),
         "chrome" | "google chrome" => "Google Chrome".to_string(),
         "msedge" | "edge" | "microsoft edge" => "Microsoft Edge".to_string(),
         "brave" | "brave browser" => "Brave Browser".to_string(),
@@ -489,8 +532,6 @@ fn get_browser_url_windows(app_name: &str, window_title: &str, hwnd: isize) -> O
 /// 仅在原生 UIAutomation 失败时调用，避免常态化子进程开销。
 #[cfg(target_os = "windows")]
 fn get_url_via_powershell_uia(hwnd: isize) -> Option<String> {
-    use std::process::Command;
-
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     const POWERSHELL_PATH: &str = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
 
@@ -548,19 +589,21 @@ for ($i = 0; $i -lt $nodes.Count; $i++) {{
 "#
     );
 
-    let output = Command::new(POWERSHELL_PATH)
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Sta",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
+    let output = run_monitor_command_with_timeout(
+        Command::new(POWERSHELL_PATH)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Sta",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW),
+        "Windows PowerShell URL 采集",
+    )
+    .ok()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -777,8 +820,6 @@ mod tests {
 /// 获取当前活动窗口信息 (macOS)
 #[cfg(target_os = "macos")]
 pub fn get_active_window() -> Result<ActiveWindow> {
-    use std::process::Command;
-
     // 使用 AppleScript 获取活动应用信息
     let script = r#"
         tell application "System Events"
@@ -792,11 +833,11 @@ pub fn get_active_window() -> Result<ActiveWindow> {
         end tell
     "#;
 
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|e| AppError::Screenshot(format!("执行AppleScript失败: {e}")))?;
+    let output = run_monitor_command_with_timeout(
+        Command::new("osascript").arg("-e").arg(script),
+        "macOS 活动窗口采集",
+    )
+    .map_err(|e| AppError::Screenshot(e.to_string()))?;
 
     if output.status.success() {
         let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -952,8 +993,6 @@ fn normalize_electron_app_name(process_name: &str, window_title: &str) -> String
 /// 使用 window 1 获取最前面窗口的活动标签页 URL
 #[cfg(target_os = "macos")]
 fn get_browser_url(app_name: &str) -> Option<String> {
-    use std::process::Command;
-
     let app_lower = app_name.to_lowercase();
 
     // 根据不同浏览器使用不同的 AppleScript
@@ -1096,11 +1135,11 @@ end tell"#,
 
     log::debug!("尝试获取 {browser_name} URL: {app_name}");
 
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .ok()?;
+    let output = run_monitor_command_with_timeout(
+        Command::new("osascript").arg("-e").arg(script),
+        &format!("{browser_name} URL 采集"),
+    )
+    .ok()?;
 
     if output.status.success() {
         let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1374,8 +1413,6 @@ pub fn get_overlay_windows(_frontmost_app: &str) -> Vec<ActiveWindow> {
 #[cfg(target_os = "macos")]
 #[allow(dead_code)]
 pub fn get_visible_windows() -> Result<Vec<ActiveWindow>> {
-    use std::process::Command;
-
     // 使用 AppleScript 获取所有可见窗口
     let script = r#"
         set output to ""
@@ -1397,11 +1434,11 @@ pub fn get_visible_windows() -> Result<Vec<ActiveWindow>> {
         return output
     "#;
 
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|e| AppError::Screenshot(format!("执行AppleScript失败: {e}")))?;
+    let output = run_monitor_command_with_timeout(
+        Command::new("osascript").arg("-e").arg(script),
+        "macOS 可见窗口采集",
+    )
+    .map_err(|e| AppError::Screenshot(e.to_string()))?;
 
     if output.status.success() {
         let result = String::from_utf8_lossy(&output.stdout);

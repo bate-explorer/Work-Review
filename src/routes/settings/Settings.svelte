@@ -18,6 +18,9 @@
   let runningApps = [];
   let recentApps = [];
   let storageStats = null;
+  let dataDir = '';
+  let defaultDataDir = '';
+  let successTimer = null;
 
   // 当前激活的标签
   let activeTab = 'general';
@@ -35,16 +38,20 @@
     loading = true;
     error = null;
     try {
-      const [loadedConfig, loadedProviders, loadedStorageStats] = await Promise.all([
+      const [loadedConfig, loadedProviders, loadedStorageStats, loadedDataDir, loadedDefaultDataDir] = await Promise.all([
         invoke('get_config'),
         invoke('get_ai_providers'),
         invoke('get_storage_stats'),
+        invoke('get_data_dir'),
+        invoke('get_default_data_dir'),
       ]);
 
       config = loadedConfig;
       cache.setConfig(config);
       providers = loadedProviders;
       storageStats = loadedStorageStats;
+      dataDir = loadedDataDir;
+      defaultDataDir = loadedDefaultDataDir;
 
       // 确保对象存在
       if (!config.ai_provider) {
@@ -101,7 +108,11 @@
       cache.setConfig(config);
       showToast('设置已保存', 'success');
       
-      setTimeout(() => success = false, 3000);
+      clearTimeout(successTimer);
+      successTimer = setTimeout(() => {
+        success = false;
+        successTimer = null;
+      }, 3000);
     } catch (e) {
       error = e.toString();
     } finally {
@@ -111,13 +122,32 @@
 
   // 清理缓存回调
   async function handleClearCache() {
-    storageStats = await invoke('get_storage_stats');
+    const [latestStats, latestDataDir] = await Promise.all([
+      invoke('get_storage_stats'),
+      invoke('get_data_dir'),
+    ]);
+    storageStats = latestStats;
+    dataDir = latestDataDir;
+  }
+
+  async function handleDataDirChanged() {
+    const [latestStats, latestDataDir] = await Promise.all([
+      invoke('get_storage_stats'),
+      invoke('get_data_dir'),
+    ]);
+    storageStats = latestStats;
+    dataDir = latestDataDir;
+    cache.clear();
   }
 
   onMount(() => {
     loadConfig();
     loadRunningApps();
     loadRecentApps();
+
+    return () => {
+      clearTimeout(successTimer);
+    };
   });
 </script>
 
@@ -217,8 +247,11 @@
         <SettingsStorage
           bind:config
           {storageStats}
+          {dataDir}
+          {defaultDataDir}
           on:change={() => {}}
           on:clearCache={handleClearCache}
+          on:dataDirChanged={handleDataDirChanged}
         />
       {/if}
       </div>

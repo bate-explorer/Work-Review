@@ -139,136 +139,155 @@
     }
   }
 
-  onMount(async () => {
-    // 获取平台信息
-    try {
-      platform = await invoke('get_platform');
-      console.log('当前平台:', platform);
-    } catch (e) {
-      console.error('获取平台信息失败:', e);
-    }
+  onMount(() => {
+    let disposed = false;
+    let cleanup = () => {};
 
-    // 加载配置并应用主题
-    let config;
-    try {
-      config = await invoke('get_config');
-      runtimeConfig = config;
-      cache.setConfig(config);
-      applyTheme(config.theme || 'system');
-    } catch (e) {
-      console.error('加载配置失败:', e);
-      applyTheme('system');
-      config = { work_end_hour: 18 };
-      runtimeConfig = config;
-    }
-
-    // 加载背景图
-    loadBackground();
-
-    try {
-      const [recording, paused] = await invoke('get_recording_state');
-      isRecording = recording;
-      isPaused = paused;
-    } catch (e) {
-      console.error('获取录制状态失败:', e);
-    }
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleSystemThemeChange = () => {
-      if (theme === 'system') applyTheme('system');
-    };
-    mediaQuery.addEventListener('change', handleSystemThemeChange);
-
-    const unsubscribeCache = cache.subscribe((state) => {
-      if (!state.config) return;
-      runtimeConfig = state.config;
-
-      if (state.config.theme && state.config.theme !== theme) {
-        applyTheme(state.config.theme);
-      }
-    });
-
-    // 监听背景图更新事件（来自设置页，实时预览）
-    const handleBgChange = (e) => handleBackgroundChanged(e);
-    window.addEventListener('background-changed', handleBgChange);
-
-    // 启动预加载
-    preloadApp();
-
-    // 启动后延迟执行一次自动更新检查，避免阻塞首屏渲染
-    const autoUpdateTimer = setTimeout(async () => {
+    (async () => {
+      // 获取平台信息
       try {
-        const shouldCheck = await invoke('should_check_updates');
-        if (!shouldCheck) return;
-
-        await invoke('update_last_check_time');
-        await runUpdateFlow({
-          silentWhenUpToDate: true,
-          confirmBeforeDownload: true,
-          onStatusChange: () => {},
-        });
+        platform = await invoke('get_platform');
+        console.log('当前平台:', platform);
       } catch (e) {
-        console.warn('自动检查更新失败:', e);
+        console.error('获取平台信息失败:', e);
       }
-    }, 2000);
 
-    // 日报自动生成检测：每分钟检查一次
-    let lastAutoGenDate = null;  // 防止同一天重复触发
-    const autoReportTimer = setInterval(async () => {
-      const now = new Date();
-      const currentHour = now.getHours();
-      const currentMinute = now.getMinutes();
-      const today = getLocalDate();
+      // 加载配置并应用主题
+      let config;
+      try {
+        config = await invoke('get_config');
+        runtimeConfig = config;
+        cache.setConfig(config);
+        applyTheme(config.theme || 'system');
+      } catch (e) {
+        console.error('加载配置失败:', e);
+        applyTheme('system');
+        config = { work_end_hour: 18 };
+        runtimeConfig = config;
+      }
 
-      // 检查是否达到工作结束时间
-      const workEndHour = runtimeConfig?.work_end_hour ?? 18;
-      const workEndMinute = runtimeConfig?.work_end_minute ?? 0;
+      // 加载背景图
+      loadBackground();
 
-      // 条件：当前小时等于工作结束时间，当前分钟 >= 结束分钟，且今天未自动生成过
-      if (currentHour === workEndHour && currentMinute >= workEndMinute && lastAutoGenDate !== today) {
-        try {
-          // 检查今日是否已有日报
-          const existingReport = await invoke('get_saved_report', { date: today });
-          if (!existingReport) {
-            console.log('工作结束时间到达，自动生成日报...');
-            await invoke('generate_report', { date: today, force: false });
-            cache.invalidate('report', today);
-            lastAutoGenDate = today;
-            console.log('日报自动生成完成');
-          } else {
-            lastAutoGenDate = today;  // 已有日报，标记今天不再触发
-          }
-        } catch (e) {
-          console.warn('日报自动生成失败:', e);
+      try {
+        const [recording, paused] = await invoke('get_recording_state');
+        isRecording = recording;
+        isPaused = paused;
+      } catch (e) {
+        console.error('获取录制状态失败:', e);
+      }
+
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleSystemThemeChange = () => {
+        if (theme === 'system') applyTheme('system');
+      };
+      mediaQuery.addEventListener('change', handleSystemThemeChange);
+
+      const unsubscribeCache = cache.subscribe((state) => {
+        if (!state.config) return;
+        runtimeConfig = state.config;
+
+        if (state.config.theme && state.config.theme !== theme) {
+          applyTheme(state.config.theme);
         }
-      }
-    }, 60000);  // 每分钟检查一次
+      });
 
-    const unlisten = await listen('screenshot-taken', (event) => {
-      console.log('截屏完成:', event.payload);
-      
-      // 1. 增量更新时间线缓存
-      cache.addActivity(event.payload);
-      
-      // 2. 使概览缓存过期（下次访问或当前页面监听时刷新）
-      cache.invalidate('overview');
-      
-      // 3. 发射自定义事件，通知当前页面实时更新
-      window.dispatchEvent(new CustomEvent('activity-added', { detail: event.payload }));
-    });
+      // 监听背景图更新事件（来自设置页，实时预览）
+      const handleBgChange = (e) => handleBackgroundChanged(e);
+      window.addEventListener('background-changed', handleBgChange);
+
+      // 启动预加载
+      preloadApp();
+
+      // 启动后延迟执行一次自动更新检查，避免阻塞首屏渲染
+      const autoUpdateTimer = setTimeout(async () => {
+        try {
+          const shouldCheck = await invoke('should_check_updates');
+          if (!shouldCheck) return;
+
+          await invoke('update_last_check_time');
+          await runUpdateFlow({
+            silentWhenUpToDate: true,
+            confirmBeforeDownload: true,
+            onStatusChange: () => {},
+          });
+        } catch (e) {
+          console.warn('自动检查更新失败:', e);
+        }
+      }, 2000);
+
+      // 日报自动生成检测：每分钟检查一次
+      let lastAutoGenDate = null;  // 防止同一天重复触发
+      const autoReportTimer = setInterval(async () => {
+        const now = new Date();
+        const currentHour = now.getHours();
+        const currentMinute = now.getMinutes();
+        const today = getLocalDate();
+
+        // 检查是否达到工作结束时间
+        const workEndHour = runtimeConfig?.work_end_hour ?? 18;
+        const workEndMinute = runtimeConfig?.work_end_minute ?? 0;
+
+        // 条件：当前小时等于工作结束时间，当前分钟 >= 结束分钟，且今天未自动生成过
+        if (currentHour === workEndHour && currentMinute >= workEndMinute && lastAutoGenDate !== today) {
+          try {
+            // 检查今日是否已有日报
+            const existingReport = await invoke('get_saved_report', { date: today });
+            if (!existingReport) {
+              console.log('工作结束时间到达，自动生成日报...');
+              await invoke('generate_report', { date: today, force: false });
+              cache.invalidate('report', today);
+              lastAutoGenDate = today;
+              console.log('日报自动生成完成');
+            } else {
+              lastAutoGenDate = today;  // 已有日报，标记今天不再触发
+            }
+          } catch (e) {
+            console.warn('日报自动生成失败:', e);
+          }
+        }
+      }, 60000);  // 每分钟检查一次
+
+      const unlisten = await listen('screenshot-taken', (event) => {
+        console.log('截屏完成:', event.payload);
+
+        // 1. 增量更新时间线缓存
+        cache.addActivity(event.payload);
+
+        // 2. 使概览缓存过期（下次访问或当前页面监听时刷新）
+        cache.invalidate('overview');
+
+        // 3. 发射自定义事件，通知当前页面实时更新
+        window.dispatchEvent(new CustomEvent('activity-added', { detail: event.payload }));
+      });
+
+      cleanup = () => {
+        unlisten();
+        unsubscribeCache();
+        clearTimeout(autoUpdateTimer);
+        clearInterval(autoReportTimer);
+        mediaQuery.removeEventListener('change', handleSystemThemeChange);
+        window.removeEventListener('background-changed', handleBgChange);
+      };
+
+      if (disposed) {
+        cleanup();
+      }
+    })();
 
     return () => {
-      unlisten();
-      unsubscribeCache();
-      clearTimeout(autoUpdateTimer);
-      clearInterval(autoReportTimer);
-      mediaQuery.removeEventListener('change', handleSystemThemeChange);
-      window.removeEventListener('background-changed', handleBgChange);
+      disposed = true;
+      cleanup();
     };
   });
 </script>
 
-<div class="flex h-screen bg-slate-50 dark:bg-slate-900 overflow-hidden relative">
+<div class="flex h-screen overflow-hidden relative bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_38%,#f8fafc_100%)] dark:bg-[linear-gradient(180deg,#020617_0%,#0f172a_44%,#020617_100%)]">
+  <div class="pointer-events-none absolute inset-0 z-0 opacity-80">
+    <div class="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.14),transparent_62%)] dark:bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.18),transparent_62%)]"></div>
+    <div class="absolute -right-16 top-24 h-48 w-48 rounded-full bg-indigo-200/20 blur-3xl dark:bg-indigo-500/12"></div>
+    <div class="absolute left-8 bottom-10 h-44 w-44 rounded-full bg-sky-200/20 blur-3xl dark:bg-sky-500/10"></div>
+  </div>
   <!-- 背景图层：图片全强度 + 半透明遮罩控制显隐 -->
   {#if backgroundImage}
     <div class="absolute inset-0 z-0 overflow-hidden pointer-events-none">
@@ -336,7 +355,7 @@
   </div>
 
   <!-- 左侧边栏 -->
-  <div class="w-52 bg-white/80 dark:bg-slate-900/90 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-700/50 flex flex-col pt-1 z-10">
+  <div class="w-52 bg-white/72 dark:bg-slate-950/72 backdrop-blur-2xl border-r border-white/60 dark:border-slate-700/50 flex flex-col pt-2 z-10 shadow-[18px_0_40px_rgba(15,23,42,0.04)] dark:shadow-[18px_0_40px_rgba(2,6,23,0.35)]">
     <Sidebar {isRecording} {isPaused} {theme} on:themeChange={handleThemeChange} />
   </div>
 

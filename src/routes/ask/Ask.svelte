@@ -4,7 +4,6 @@
   import { marked } from 'marked';
   import { formatDuration } from '../../lib/utils/workIntelligence.js';
   import { assistantStore, BASIC_ASSISTANT_MODEL_ID } from '../../lib/stores/assistant.js';
-  import { showToast } from '../../lib/stores/toast.js';
 
   marked.use({
     gfm: true,
@@ -27,6 +26,7 @@
   let messages = [];
   let unsubscribeAssistant = () => {};
   let destroyed = false;
+  let stickToBottom = true;
 
   // 模型选择器
   let modelProfiles = [];
@@ -34,20 +34,46 @@
 
   onMount(async () => {
     unsubscribeAssistant = assistantStore.subscribe((state) => {
-      messages = state.messages || [];
+      const nextMessages = state.messages || [];
+      const previousCount = messages.length;
+      const messageCountIncreased = nextMessages.length > previousCount;
+      const latestMessage = nextMessages[nextMessages.length - 1];
+
+      messages = nextMessages;
+      selectedModelId = state.selectedModelId || BASIC_ASSISTANT_MODEL_ID;
+
+      if (!nextMessages.length) {
+        stickToBottom = true;
+        return;
+      }
+
+      if (previousCount === 0) {
+        void scrollToBottom('auto', 3);
+        return;
+      }
+
+      if (messageCountIncreased && (stickToBottom || latestMessage?.role === 'user')) {
+        void scrollToBottom(latestMessage?.role === 'assistant' ? 'smooth' : 'auto', 2);
+      }
     });
 
     // 加载模型档案
     try {
       const config = await invoke('get_config');
       modelProfiles = config.text_model_profiles || [];
-      // 默认保持"基础模板"，用户需要时手动切换到 AI 增强
+      if (
+        selectedModelId !== BASIC_ASSISTANT_MODEL_ID &&
+        !modelProfiles.some((profile) => profile.id === selectedModelId)
+      ) {
+        selectedModelId = BASIC_ASSISTANT_MODEL_ID;
+        assistantStore.setSelectedModelId(BASIC_ASSISTANT_MODEL_ID);
+      }
     } catch (e) {
       console.warn('加载模型配置失败:', e);
     }
 
     resizeComposer();
-    await scrollToBottom();
+    await scrollToBottom('auto', 3);
     composer?.focus();
   });
 
@@ -156,15 +182,26 @@
     composer.style.height = `${Math.min(composer.scrollHeight, 220)}px`;
   }
 
-  async function scrollToBottom() {
+  function isNearBottom(threshold = 120) {
+    if (!chatBody) return true;
+    return chatBody.scrollHeight - chatBody.scrollTop - chatBody.clientHeight <= threshold;
+  }
+
+  function syncStickToBottom() {
+    stickToBottom = isNearBottom();
+  }
+
+  async function scrollToBottom(behavior = 'smooth', attempts = 1) {
     await tick();
-    if (bottomAnchor?.scrollIntoView) {
-      bottomAnchor.scrollIntoView({ block: 'end', behavior: 'smooth' });
-      return;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (bottomAnchor?.scrollIntoView) {
+        bottomAnchor.scrollIntoView({ block: 'end', behavior });
+      } else if (chatBody) {
+        chatBody.scrollTop = chatBody.scrollHeight;
+      }
     }
-    if (chatBody) {
-      chatBody.scrollTop = chatBody.scrollHeight;
-    }
+    stickToBottom = true;
   }
 
   function buildHistoryPayload() {
@@ -185,19 +222,16 @@
     return profile ? profile.model_config : null;
   }
 
-  function getSelectedModelLabel() {
-    if (selectedModelId === BASIC_ASSISTANT_MODEL_ID) {
-      return '自动整理';
-    }
-    const profile = modelProfiles.find((p) => p.id === selectedModelId);
-    return profile ? profile.name : '自动整理';
+  function handleModelChange(event) {
+    selectedModelId = event.currentTarget.value;
+    assistantStore.setSelectedModelId(selectedModelId);
   }
 
   async function clearConversation() {
     assistantStore.clearMessages();
     error = null;
     await tick();
-    await scrollToBottom();
+    await scrollToBottom('auto', 2);
     composer?.focus();
   }
 
@@ -218,7 +252,7 @@
     input = '';
     resizeComposer();
     await tick();
-    await scrollToBottom();
+    await scrollToBottom('auto', 2);
 
     try {
       const answer = await invoke('chat_work_assistant', {
@@ -265,7 +299,7 @@
 
 <div class="page-shell h-full">
   <div class="flex min-h-[calc(100vh-7rem)] flex-col">
-    <div bind:this={chatBody} class="flex-1 overflow-y-auto px-4 pb-40 pt-10">
+    <div bind:this={chatBody} class="flex-1 overflow-y-auto px-4 pb-40 pt-10" on:scroll={syncStickToBottom}>
       {#if !hasConversation}
         <div class="mx-auto flex min-h-full max-w-4xl flex-col items-center justify-center text-center">
           <h1 class="mb-2 text-2xl font-semibold tracking-tight text-slate-800 dark:text-slate-100">工作助手</h1>
@@ -292,7 +326,7 @@
                   : 'w-full max-w-[90%] px-1 py-1 text-slate-800 dark:text-slate-100'}
               >
                 {#if message.role === 'assistant'}
-                  <div class="markdown-body prose prose-slate max-w-none dark:prose-invert">
+                  <div class="markdown-body assistant-markdown max-w-none">
                     {@html renderMarkdown(message.content)}
                   </div>
 
@@ -377,15 +411,16 @@
 
           <div class="mt-3 flex items-center justify-between gap-3 border-t border-slate-200/60 pt-2.5 dark:border-slate-700/60">
             <div class="flex min-w-0 flex-1 items-center gap-2">
-              <!-- 模型选择器（下拉） -->
               <select
                 bind:value={selectedModelId}
-                class="h-8 min-w-0 max-w-[200px] cursor-pointer appearance-none rounded-full border-none bg-slate-100/80 px-3 pr-7 text-[11px] font-medium text-slate-600 outline-none transition hover:bg-slate-200/80 focus:ring-2 focus:ring-slate-300 dark:bg-slate-800/60 dark:text-slate-300 dark:hover:bg-slate-700/80 dark:focus:ring-slate-600"
-                style="background-image: url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 8px center;"
+                on:change={handleModelChange}
+                class="h-8 min-w-[122px] max-w-[176px] cursor-pointer appearance-none rounded-full border border-slate-200/80 bg-slate-100/90 px-3 pr-8 text-[11px] font-medium text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] outline-none transition hover:bg-slate-200/70 focus:ring-2 focus:ring-slate-300 dark:border-slate-700/80 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:bg-slate-700/80 dark:focus:ring-slate-600"
+                style="background-image: url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 10px center;"
+                aria-label="选择助手模型"
               >
                 <option value={BASIC_ASSISTANT_MODEL_ID}>基础模板</option>
                 {#each modelProfiles as profile}
-                  <option value={profile.id}>AI 增强</option>
+                  <option value={profile.id}>{profile.name || 'AI 增强'}</option>
                 {/each}
               </select>
 
