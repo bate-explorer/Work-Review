@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 修复
 - 修复应用内更新在安装完成后调用重启命令被 Tauri ACL 拦截的问题：补充 `process` 插件的 `restart` 权限，避免出现 `Command plugin:process|restart not allowed by ACL` 导致更新停在旧版本。
+- 修复 Windows 应用图标首次提取失败后在当前会话内不再重试的问题：失败缓存改为短时冷却，减少 `File Explorer`、`Google Chrome` 等常见应用长期停留在字母徽标的情况。
+
+### 优化
+- 优化发布流程中的产物重命名规则。
 
 ## [1.0.19] - 2026-03-24
 

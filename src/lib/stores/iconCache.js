@@ -7,6 +7,8 @@ const _iconCache = {};
 const _pendingRequests = {};
 const _cacheKeys = [];
 const MAX_ICON_CACHE = 120;
+const FAILED_ICON_RETRY_MS = 30 * 1000;
+const _failedAt = {};
 
 function touchCacheKey(appName) {
     const index = _cacheKeys.indexOf(appName);
@@ -21,6 +23,7 @@ function pruneCache() {
         const oldest = _cacheKeys.shift();
         delete _iconCache[oldest];
         delete _pendingRequests[oldest];
+        delete _failedAt[oldest];
     }
 }
 
@@ -29,8 +32,20 @@ export const appIconStore = writable({});
 
 // 加载指定应用的图标
 export async function loadAppIcon(appName, invoke) {
-    // 已缓存（成功或失败），直接返回
-    if (_iconCache[appName] !== undefined) return;
+    if (!appName) return;
+
+    // 成功缓存直接复用；失败缓存仅在冷却期内跳过重试
+    if (_iconCache[appName] !== undefined) {
+        if (_iconCache[appName] !== null) {
+            touchCacheKey(appName);
+            return;
+        }
+
+        const lastFailedAt = _failedAt[appName] || 0;
+        if (Date.now() - lastFailedAt < FAILED_ICON_RETRY_MS) {
+            return;
+        }
+    }
 
     // 避免同一应用并发请求
     if (_pendingRequests[appName]) return;
@@ -40,13 +55,16 @@ export async function loadAppIcon(appName, invoke) {
         const base64 = await invoke('get_app_icon', { appName });
         if (base64 && base64.length > 100) {
             _iconCache[appName] = base64;
+            delete _failedAt[appName];
         } else {
             _iconCache[appName] = null;
+            _failedAt[appName] = Date.now();
         }
         touchCacheKey(appName);
         pruneCache();
     } catch {
         _iconCache[appName] = null;
+        _failedAt[appName] = Date.now();
         touchCacheKey(appName);
         pruneCache();
     } finally {

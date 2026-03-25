@@ -54,6 +54,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          normalize_name() {
+            local filename="$1"
+            printf '%s' "${filename// /_}"
+          }
+
           if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" ]]; then
             ARCH_SUFFIX="aarch64"
           else
@@ -63,8 +68,44 @@ jobs:
           find src-tauri/target -type f -path "*/release/bundle/macos/*.app.tar.gz" | while read -r file; do
             dir="$(dirname "$file")"
             base="$(basename "$file" ".app.tar.gz")"
-            renamed="${dir}/${base}_${ARCH_SUFFIX}.app.tar.gz"
+            normalized_base="$(normalize_name "$base")"
+            renamed="${dir}/${normalized_base}_${ARCH_SUFFIX}.app.tar.gz"
             mv "$file" "$renamed"
+
+            if [[ -f "${file}.sig" ]]; then
+              mv "${file}.sig" "${renamed}.sig"
+            fi
+          done
+
+          find src-tauri/target -type f -path "*/release/bundle/dmg/*.dmg" | while read -r file; do
+            dir="$(dirname "$file")"
+            name="$(basename "$file")"
+            normalized_name="$(normalize_name "$name")"
+            renamed="${dir}/${normalized_name}"
+            if [[ "$file" != "$renamed" ]]; then
+              mv "$file" "$renamed"
+            fi
+          done
+
+      - name: Rename Windows installer assets
+        if: startsWith(matrix.platform, 'windows')
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          normalize_name() {
+            local filename="$1"
+            printf '%s' "${filename// /_}"
+          }
+
+          find src-tauri/target -type f -path "*/release/bundle/nsis/*.exe" | while read -r file; do
+            dir="$(dirname "$file")"
+            name="$(basename "$file")"
+            normalized_name="$(normalize_name "$name")"
+            renamed="${dir}/${normalized_name}"
+            if [[ "$file" != "$renamed" ]]; then
+              mv "$file" "$renamed"
+            fi
 
             if [[ -f "${file}.sig" ]]; then
               mv "${file}.sig" "${renamed}.sig"
@@ -150,7 +191,7 @@ jobs:
           ### macOS 安装说明
           首次打开可能提示「已损坏，无法打开」，请执行：
           \`\`\`bash
-          sudo xattr -rd com.apple.quarantine /Applications/Work_Review.app
+          sudo xattr -rd com.apple.quarantine "/Applications/Work Review.app"
           \`\`\`"
 
           printf '%s\n' "$BODY" > release_notes.md

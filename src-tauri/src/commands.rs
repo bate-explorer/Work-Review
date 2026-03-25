@@ -3382,7 +3382,7 @@ pub fn set_dock_visibility(visible: bool) -> Result<(), AppError> {
                     resource
                 } else {
                     NSString::alloc(nil)
-                        .init_str("/Applications/Work_Review.app/Contents/Resources/icon.icns")
+                        .init_str("/Applications/Work Review.app/Contents/Resources/icon.icns")
                 };
 
                 let image: *mut Object = NSImage::alloc(nil).initByReferencingFile_(path_to_use);
