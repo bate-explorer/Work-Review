@@ -2458,13 +2458,41 @@ pub async fn get_recording_state(
 #[tauri::command]
 pub async fn get_data_dir(state: State<'_, Arc<Mutex<AppState>>>) -> Result<String, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    Ok(state.data_dir.to_string_lossy().to_string())
+    Ok(path_for_display(&state.data_dir))
 }
 
 /// 获取默认数据目录
 #[tauri::command]
 pub async fn get_default_data_dir() -> Result<String, AppError> {
-    Ok(crate::default_data_dir().to_string_lossy().to_string())
+    Ok(path_for_display(&crate::default_data_dir()))
+}
+
+#[tauri::command]
+pub async fn get_runtime_platform() -> Result<String, AppError> {
+    Ok(std::env::consts::OS.to_string())
+}
+
+#[tauri::command]
+pub async fn quit_app_for_update(app: AppHandle) -> Result<(), AppError> {
+    app.exit(0);
+    Ok(())
+}
+
+fn path_for_display(path: &Path) -> String {
+    let raw = path.to_string_lossy().to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        raw.strip_prefix(r"\\?\")
+            .or_else(|| raw.strip_prefix(r"\??\"))
+            .unwrap_or(&raw)
+            .to_string()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        raw
+    }
 }
 
 fn is_ignorable_dir_entry(name: &str) -> bool {
@@ -3724,18 +3752,88 @@ fn windows_icon_process_candidates(app_name: &str) -> Vec<String> {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_known_icon_paths(app_name: &str) -> Vec<String> {
+    let trimmed = app_name
+        .trim()
+        .trim_end_matches(".exe")
+        .trim_end_matches(".EXE")
+        .trim();
+    let normalized = trimmed.to_lowercase();
+    let compact = normalized
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>();
+
+    let program_files = std::env::var("ProgramFiles").unwrap_or_default();
+    let program_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
+    let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let app_data = std::env::var("APPDATA").unwrap_or_default();
+    let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
+
+    let mut paths = Vec::new();
+    let mut push_path = |path: String| {
+        if !path.is_empty() && !paths.contains(&path) {
+            paths.push(path);
+        }
+    };
+
+    match compact.as_str() {
+        "explorer" | "fileexplorer" => {
+            push_path(format!(r"{}\explorer.exe", windir));
+        }
+        "msedge" | "edge" | "microsoftedge" => {
+            push_path(format!(r"{}\Microsoft\Edge\Application\msedge.exe", program_files_x86));
+            push_path(format!(r"{}\Microsoft\Edge\Application\msedge.exe", program_files));
+        }
+        "chrome" | "googlechrome" => {
+            push_path(format!(r"{}\Google\Chrome\Application\chrome.exe", program_files));
+            push_path(format!(r"{}\Google\Chrome\Application\chrome.exe", program_files_x86));
+        }
+        "wechat" | "weixin" => {
+            push_path(format!(r"{}\Tencent\WeChat\WeChat.exe", program_files_x86));
+            push_path(format!(r"{}\Tencent\WeChat\WeChat.exe", program_files));
+        }
+        "wecom" | "wxwork" => {
+            push_path(format!(r"{}\Tencent\WeCom\WXWork.exe", program_files_x86));
+            push_path(format!(r"{}\Tencent\WeCom\WXWork.exe", program_files));
+        }
+        "obsidian" => {
+            push_path(format!(r"{}\Programs\Obsidian\Obsidian.exe", local_app_data));
+        }
+        "pixpin" => {
+            push_path(format!(r"{}\PixPin\PixPin.exe", local_app_data));
+        }
+        "xshell" => {
+            push_path(format!(r"{}\NetSarang Computer\7\Xshell.exe", program_files_x86));
+            push_path(format!(r"{}\NetSarang Computer\7\Xshell.exe", program_files));
+            push_path(format!(r"{}\NetSarang Computer\8\Xshell.exe", program_files_x86));
+            push_path(format!(r"{}\NetSarang Computer\8\Xshell.exe", program_files));
+        }
+        "wechatappex" => {
+            push_path(format!(r"{}\Tencent\WeChat\XPlugin\Plugins\WeChatAppEx\WeChatAppEx.exe", app_data));
+        }
+        _ => {}
+    }
+
+    paths
+}
+
+#[cfg(target_os = "windows")]
 async fn get_app_icon_impl(app_name: &str) -> Result<String, AppError> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     // CREATE_NO_WINDOW 标志
     const CREATE_NO_WINDOW: u32 = 0x08000000;
+    const WINDOWS_ICON_CACHE_VERSION: &str = "v3";
 
     // 磁盘缓存：检查是否已有缓存
     let cache_dir = std::env::temp_dir().join("work_review_icons");
     let _ = std::fs::create_dir_all(&cache_dir);
-    let safe_name = app_name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
-    let cache_file = cache_dir.join(format!("{safe_name}.b64"));
+    let cache_key_name = crate::monitor::normalize_display_app_name(app_name);
+    let safe_name =
+        cache_key_name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
+    let cache_file = cache_dir.join(format!("{safe_name}_{WINDOWS_ICON_CACHE_VERSION}.b64"));
 
     if cache_file.exists() {
         if let Ok(metadata) = std::fs::metadata(&cache_file) {
@@ -3753,9 +3851,18 @@ async fn get_app_icon_impl(app_name: &str) -> Result<String, AppError> {
     }
 
     let process_candidates = windows_icon_process_candidates(app_name);
+    let known_icon_paths = windows_known_icon_paths(app_name)
+        .into_iter()
+        .filter(|path| std::path::Path::new(path).exists())
+        .collect::<Vec<_>>();
     let ps_candidates = process_candidates
         .iter()
         .map(|candidate| format!("'{}'", candidate.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ps_path_candidates = known_icon_paths
+        .iter()
+        .map(|path| format!("'{}'", path.replace('\'', "''")))
         .collect::<Vec<_>>()
         .join(", ");
     let title_hint = app_name.to_lowercase().replace('\'', "''");
@@ -3855,8 +3962,182 @@ function Normalize-Key([string]$value) {{
 }}
 
 $candidates = @({})
+$pathCandidates = @({})
+$candidateKeys = @($candidates | ForEach-Object {{ Normalize-Key $_ }} | Where-Object {{ $_ }} | Select-Object -Unique)
+$script:shortcutShell = $null
 $app = $null
 $processes = Get-Process -ErrorAction SilentlyContinue | Where-Object {{ $_.Path }}
+
+function Matches-CandidateKey([string]$value) {{
+    $valueKey = Normalize-Key $value
+    if (-not $valueKey) {{ return $false }}
+
+    foreach ($candidateKey in $candidateKeys) {{
+        if (-not $candidateKey) {{ continue }}
+        if ($valueKey.Contains($candidateKey)) {{ return $true }}
+        if ($valueKey.Length -ge 4 -and $candidateKey.Contains($valueKey)) {{ return $true }}
+    }}
+
+    return $false
+}}
+
+function Resolve-ShortcutTarget([string]$shortcutPath) {{
+    if (-not $shortcutPath -or -not (Test-Path $shortcutPath -PathType Leaf)) {{
+        return $null
+    }}
+
+    try {{
+        if (-not $script:shortcutShell) {{
+            $script:shortcutShell = New-Object -ComObject WScript.Shell
+        }}
+
+        $shortcut = $script:shortcutShell.CreateShortcut($shortcutPath)
+        if ($shortcut -and $shortcut.TargetPath) {{
+            return $shortcut.TargetPath
+        }}
+    }} catch {{
+    }}
+
+    return $null
+}}
+
+function Resolve-ExecutablePath([string]$rawPath) {{
+    if ([string]::IsNullOrWhiteSpace($rawPath)) {{
+        return $null
+    }}
+
+    $candidate = $rawPath.Trim()
+    $candidate = $candidate -replace '^(\\\\\?\\|\\\?\?\\)', ''
+
+    if ($candidate -match '^(?<path>([A-Za-z]:\\|\\\\)[^"]+?\.(exe|lnk|ico))(\s+.*|,.*)?$') {{
+        $candidate = $matches['path']
+    }} else {{
+        $candidate = $candidate.Trim('"')
+    }}
+
+    if ($candidate.EndsWith('.lnk', [System.StringComparison]::OrdinalIgnoreCase)) {{
+        $shortcutTarget = Resolve-ShortcutTarget $candidate
+        if ($shortcutTarget) {{
+            return Resolve-ExecutablePath $shortcutTarget
+        }}
+        return $null
+    }}
+
+    if (Test-Path $candidate -PathType Leaf) {{
+        return $candidate
+    }}
+
+    return $null
+}}
+
+function Find-MatchingExecutableInDirectory([string]$directory) {{
+    if ([string]::IsNullOrWhiteSpace($directory) -or -not (Test-Path $directory -PathType Container)) {{
+        return $null
+    }}
+
+    $executables = Get-ChildItem -Path $directory -Filter *.exe -File -ErrorAction SilentlyContinue
+    foreach ($exe in $executables) {{
+        if (Matches-CandidateKey $exe.BaseName) {{
+            return $exe.FullName
+        }}
+    }}
+
+    return $null
+}}
+
+function Find-RegistryExecutable() {{
+    $uninstallPatterns = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKCU:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+
+    foreach ($pattern in $uninstallPatterns) {{
+        $entries = Get-ItemProperty -Path $pattern -ErrorAction SilentlyContinue
+        foreach ($entry in $entries) {{
+            if (-not (Matches-CandidateKey $entry.DisplayName) `
+                -and -not (Matches-CandidateKey $entry.PSChildName) `
+                -and -not (Matches-CandidateKey $entry.DisplayIcon) `
+                -and -not (Matches-CandidateKey $entry.InstallLocation)) {{
+                continue
+            }}
+
+            $resolved = Resolve-ExecutablePath $entry.DisplayIcon
+            if ($resolved) {{
+                return $resolved
+            }}
+
+            $resolved = Find-MatchingExecutableInDirectory $entry.InstallLocation
+            if ($resolved) {{
+                return $resolved
+            }}
+        }}
+    }}
+
+    $appPathRoots = @(
+        'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths',
+        'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths',
+        'Registry::HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths'
+    )
+
+    foreach ($root in $appPathRoots) {{
+        if (-not (Test-Path $root)) {{
+            continue
+        }}
+
+        $items = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
+        foreach ($item in $items) {{
+            if (-not (Matches-CandidateKey $item.PSChildName)) {{
+                continue
+            }}
+
+            try {{
+                $resolved = Resolve-ExecutablePath $item.GetValue('')
+                if ($resolved) {{
+                    return $resolved
+                }}
+            }} catch {{
+            }}
+
+            try {{
+                $resolved = Find-MatchingExecutableInDirectory $item.GetValue('Path')
+                if ($resolved) {{
+                    return $resolved
+                }}
+            }} catch {{
+            }}
+        }}
+    }}
+
+    return $null
+}}
+
+function Find-ShortcutExecutable() {{
+    $shortcutRoots = @(
+        (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'),
+        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
+        (Join-Path $env:PUBLIC 'Desktop'),
+        (Join-Path $env:USERPROFILE 'Desktop')
+    ) | Where-Object {{ $_ -and (Test-Path $_) }}
+
+    foreach ($root in $shortcutRoots) {{
+        $shortcut = Get-ChildItem -Path $root -Filter *.lnk -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object {{ Matches-CandidateKey $_.BaseName -or Matches-CandidateKey $_.Name }} |
+            Select-Object -First 1
+
+        if (-not $shortcut) {{
+            continue
+        }}
+
+        $resolved = Resolve-ExecutablePath $shortcut.FullName
+        if ($resolved) {{
+            return $resolved
+        }}
+    }}
+
+    return $null
+}}
 
 foreach ($candidate in $candidates) {{
     $candidateKey = Normalize-Key $candidate
@@ -3879,9 +4160,29 @@ if (-not $app) {{
 
 if ($app -and $app.Path) {{
     [JumboIconExtractor]::Extract($app.Path)
+    exit 0
+}}
+
+foreach ($candidatePath in $pathCandidates) {{
+    if (-not [string]::IsNullOrWhiteSpace($candidatePath) -and (Test-Path $candidatePath)) {{
+        [JumboIconExtractor]::Extract($candidatePath)
+        exit 0
+    }}
+}}
+
+$registryPath = Find-RegistryExecutable
+if ($registryPath) {{
+    [JumboIconExtractor]::Extract($registryPath)
+    exit 0
+}}
+
+$shortcutPath = Find-ShortcutExecutable
+if ($shortcutPath) {{
+    [JumboIconExtractor]::Extract($shortcutPath)
+    exit 0
 }}
 "#,
-        ps_candidates, title_hint
+        ps_candidates, ps_path_candidates, title_hint
     );
 
     let output = Command::new("powershell")

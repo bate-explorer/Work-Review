@@ -100,6 +100,7 @@ pub fn is_browser_app(app_name: &str) -> bool {
     let app_lower = app_name.to_lowercase();
     app_lower.contains("chrome")
         || app_lower.contains("msedge")
+        || app_lower.contains("microsoft edge")
         || app_lower.contains("brave")
         || app_lower.contains("opera")
         || app_lower.contains("vivaldi")
@@ -109,6 +110,9 @@ pub fn is_browser_app(app_name: &str) -> bool {
         || app_lower.contains("orion")
         || app_lower.contains("zen browser")
         || app_lower.contains("browser")
+        || app_lower.contains("qq browser")
+        || app_lower.contains("360 browser")
+        || app_lower.contains("sogou browser")
         || app_lower.contains("360se")
         || app_lower.contains("360chrome")
         || app_lower.contains("qqbrowser")
@@ -142,9 +146,9 @@ pub fn normalize_display_app_name(app_name: &str) -> String {
         "chromium" => "Chromium".to_string(),
         "arc" => "Arc".to_string(),
         "zen browser" | "zen" => "Zen Browser".to_string(),
-        "qqbrowser" | "qq浏览器" => "QQ Browser".to_string(),
-        "360se" | "360chrome" | "360浏览器" => "360 Browser".to_string(),
-        "sogouexplorer" | "搜狗浏览器" => "Sogou Browser".to_string(),
+        "qqbrowser" | "qq browser" | "qq浏览器" => "QQ Browser".to_string(),
+        "360se" | "360chrome" | "360 browser" | "360浏览器" => "360 Browser".to_string(),
+        "sogouexplorer" | "sogou browser" | "搜狗浏览器" => "Sogou Browser".to_string(),
         "code" | "vscode" | "visual studio code" | "vs code" => "VS Code".to_string(),
         "cursor" => "Cursor".to_string(),
         "wechat" | "weixin" | "微信" => "WeChat".to_string(),
@@ -764,15 +768,28 @@ fn extract_url_from_title(window_title: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_url_from_title, is_browser_app, is_probable_domain, normalize_possible_url,
+        categorize_app, extract_url_from_title, is_browser_app, is_probable_domain,
+        normalize_possible_url,
     };
 
     #[test]
     fn 识别浏览器进程名() {
         assert!(is_browser_app("chrome.exe"));
         assert!(is_browser_app("msedge.exe"));
+        assert!(is_browser_app("Microsoft Edge"));
+        assert!(is_browser_app("QQ Browser"));
+        assert!(is_browser_app("360 Browser"));
+        assert!(is_browser_app("Sogou Browser"));
         assert!(is_browser_app("Safari"));
         assert!(!is_browser_app("Code.exe"));
+    }
+
+    #[test]
+    fn 归一化后的浏览器显示名仍能归类为浏览器() {
+        assert_eq!(categorize_app("Microsoft Edge", "example.com"), "browser");
+        assert_eq!(categorize_app("QQ Browser", "example.com"), "browser");
+        assert_eq!(categorize_app("360 Browser", "example.com"), "browser");
+        assert_eq!(categorize_app("Sogou Browser", "example.com"), "browser");
     }
 
     #[test]
@@ -1533,6 +1550,7 @@ pub fn categorize_app(app_name: &str, window_title: &str) -> String {
         || app_lower.contains("firefox")
         || app_lower.contains("safari")
         || app_lower.contains("msedge")
+        || app_lower.contains("microsoft edge")
         || app_lower.contains("opera")
         || app_lower.contains("brave")
         || app_lower.starts_with("arc")
@@ -1551,6 +1569,9 @@ pub fn categorize_app(app_name: &str, window_title: &str) -> String {
         || app_lower.starts_with("whale")
         || app_lower.contains("naver")
         || app_lower.contains("uc browser")
+        || app_lower.contains("qq browser")
+        || app_lower.contains("360 browser")
+        || app_lower.contains("sogou browser")
         || app_lower.contains("qqbrowser")
         || app_lower.contains("360se")
         || app_lower.contains("360chrome")

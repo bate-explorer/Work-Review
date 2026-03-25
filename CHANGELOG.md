@@ -5,14 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.20] - 2026-03-25
+## [1.0.21] - 2026-03-25
 
 ### 修复
-- 修复应用内更新在安装完成后调用重启命令被 Tauri ACL 拦截的问题：补充 `process` 插件的 `restart` 权限，避免出现 `Command plugin:process|restart not allowed by ACL` 导致更新停在旧版本。
-- 修复 Windows 应用图标首次提取失败后在当前会话内不再重试的问题：失败缓存改为短时冷却，减少 `File Explorer`、`Google Chrome` 等常见应用长期停留在字母徽标的情况。
+- 修复 Windows 下浏览器归类不稳定导致概览网站访问统计异常的问题。
+- 修复时间线、概览与应用使用图标表现不一致的问题，统一图标获取与缓存链路。
+- 修复关于页和设置页本地数据目录显示异常的问题，Windows 下不再直接展示 `\\?\` / `\??\` 前缀。
 
 ### 优化
-- 优化发布流程中的产物重命名规则。
+- 优化 Windows 图标提取兜底策略，补充安装目录、注册表和快捷方式回查，提升常见应用图标命中率。
+- 更新 README 介绍与界面截图展示。
 
 ## [1.0.19] - 2026-03-24
 

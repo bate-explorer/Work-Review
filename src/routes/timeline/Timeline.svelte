@@ -4,6 +4,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-shell';
   import { cache } from '../../lib/stores/cache.js';
+  import { appIconStore, preloadAppIcons } from '../../lib/stores/iconCache.js';
   import { resolveAppIconSrc } from '../../lib/utils/appVisuals.js';
 
   // 获取本地日期（避免 UTC 时区问题）
@@ -24,6 +25,7 @@
   let unlisten = null;
   let currentTime = new Date();
   let clockInterval;
+  let appIcons = {};
 
   // LRU 缓存：防止长时间运行内存无限增长
   // 缩略图 ~80KB/条，60 条 ≈ 5MB；高清图 ~300KB/条，20 条 ≈ 6MB
@@ -54,56 +56,7 @@
     fullImageKeys = [];
   }
 
-  // 应用图标缓存（localStorage 持久化，上限 100 个应用）
-  const ICON_CACHE_KEY = 'work_review_app_icons';
-  const ICON_CACHE_LIMIT = 100;
-  let appIconCache = {};
-  
-  // 从 localStorage 恢复缓存
-  try {
-    const cached = localStorage.getItem(ICON_CACHE_KEY);
-    if (cached) {
-      appIconCache = JSON.parse(cached);
-    }
-  } catch (e) {
-    console.warn('恢复图标缓存失败:', e);
-  }
-  
-  // 保存图标缓存到 localStorage
-  function saveIconCache() {
-    try {
-      localStorage.setItem(ICON_CACHE_KEY, JSON.stringify(appIconCache));
-    } catch (e) {
-      console.warn('保存图标缓存失败:', e);
-    }
-  }
-
-  // 加载应用图标（带条目上限，超出时淘汰最旧的缓存）
-  async function loadAppIcon(appName) {
-    if (appIconCache[appName] !== undefined) {
-      return appIconCache[appName];
-    }
-    try {
-      const base64 = await invoke('get_app_icon', { appName });
-      if (base64 && base64.length > 100) {
-        appIconCache = { ...appIconCache, [appName]: base64 };
-      } else {
-        appIconCache = { ...appIconCache, [appName]: null };
-      }
-      // 超出上限时淘汰最旧条目
-      const keys = Object.keys(appIconCache);
-      if (keys.length > ICON_CACHE_LIMIT) {
-        const toRemove = keys.slice(0, keys.length - ICON_CACHE_LIMIT);
-        toRemove.forEach(k => delete appIconCache[k]);
-      }
-      saveIconCache();
-      return appIconCache[appName];
-    } catch (e) {
-      console.warn('加载应用图标失败:', appName, e);
-      appIconCache = { ...appIconCache, [appName]: null };
-      return null;
-    }
-  }
+  const unsubIcons = appIconStore.subscribe(v => appIcons = v);
 
   // 分类名称和颜色
   const categoryInfo = {
@@ -139,7 +92,7 @@
   }
 
   function getTimelineIconSrc(appName) {
-    return resolveAppIconSrc(appName, appIconCache[appName]);
+    return resolveAppIconSrc(appName, appIcons[appName]);
   }
 
   // 优化窗口标题显示
@@ -272,7 +225,7 @@
       
       // 预加载应用图标（获取唯一应用名并批量加载）
       const uniqueAppNames = [...new Set(activities.map(a => a.app_name))];
-      uniqueAppNames.forEach(appName => loadAppIcon(appName));
+      preloadAppIcons(uniqueAppNames, invoke);
     } catch (e) {
       error = e.toString();
       console.error('获取时间线失败:', e);
@@ -298,6 +251,7 @@
         offset += moreActivities.length;
         // 预加载新图片
         moreActivities.forEach(a => loadThumbnail(a.screenshot_path));
+        preloadAppIcons([...new Set(moreActivities.map(a => a.app_name))], invoke);
       }
       
       if (moreActivities.length < PAGE_SIZE) {
@@ -420,6 +374,7 @@
   onDestroy(() => {
     if (unlisten) unlisten();
     if (clockInterval) clearInterval(clockInterval);
+    unsubIcons();
   });
 </script>
 

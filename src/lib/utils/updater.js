@@ -7,6 +7,18 @@ import { showToast } from '$lib/stores/toast.js';
 const UPDATE_STATUS_EVENT = 'update-status';
 
 let updateInFlight = false;
+let runtimePlatformPromise = null;
+
+async function getRuntimePlatform() {
+  if (!runtimePlatformPromise) {
+    runtimePlatformPromise = invoke('get_runtime_platform').catch((error) => {
+      runtimePlatformPromise = null;
+      throw error;
+    });
+  }
+
+  return runtimePlatformPromise;
+}
 
 export async function runUpdateFlow(options = {}) {
   const {
@@ -61,6 +73,14 @@ export async function runUpdateFlow(options = {}) {
       });
     } finally {
       await unlistenUpdateStatus();
+    }
+
+    const runtimePlatform = await getRuntimePlatform();
+    if (runtimePlatform === 'windows') {
+      onStatusChange('安装器已启动，正在退出当前应用完成更新...');
+      showToast('安装器已启动，应用退出后将完成更新', 'success');
+      await invoke('quit_app_for_update');
+      return { updated: true, handoffToInstaller: true };
     }
 
     onStatusChange('安装完成，正在重启...');
