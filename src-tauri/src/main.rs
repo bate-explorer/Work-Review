@@ -39,6 +39,37 @@ use tauri::{AppHandle, Emitter, Manager};
 // 全局 AppHandle，用于在 macOS Dock 点击时恢复窗口
 static APP_HANDLE: OnceCell<AppHandle> = OnceCell::new();
 
+fn build_tray_icon(app: &tauri::App) -> tauri::image::Image<'static> {
+    #[cfg(target_os = "macos")]
+    {
+        match image::load_from_memory_with_format(
+            include_bytes!("../icons/tray-template.png"),
+            image::ImageFormat::Png,
+        ) {
+            Ok(decoded) => {
+                let rgba = decoded.to_rgba8();
+                let (width, height) = rgba.dimensions();
+                tauri::image::Image::new_owned(rgba.into_raw(), width, height)
+            }
+            Err(e) => {
+                log::warn!("加载 macOS 状态栏专用图标失败，回退默认图标: {e}");
+                app.default_window_icon()
+                    .expect("应用默认图标缺失")
+                    .clone()
+                    .to_owned()
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        app.default_window_icon()
+            .expect("应用默认图标缺失")
+            .clone()
+            .to_owned()
+    }
+}
+
 /// 应用状态
 pub struct AppState {
     pub config: AppConfig,
@@ -515,6 +546,7 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, window: tauri::
                     category,
                     duration: duration_to_record,
                     browser_url: None,
+                    executable_path: active_window.executable_path,
                 };
 
                 // 短暂获取锁写入数据库
@@ -801,6 +833,7 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, window: tauri::
                         category,
                         duration: latest.duration + effective_duration,
                         browser_url: active_window.browser_url,
+                        executable_path: active_window.executable_path,
                     })
                 } else {
                     // === 新建路径：正常截屏并保存 ===
@@ -851,6 +884,7 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, window: tauri::
                                 category,
                                 duration: effective_duration,
                                 browser_url: active_window.browser_url,
+                                executable_path: active_window.executable_path,
                             };
 
                             let inserted = {
@@ -1013,6 +1047,7 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, window: tauri::
                     category: ow_category,
                     duration: ow_duration,
                     browser_url: None,
+                    executable_path: ow.executable_path.clone(),
                 };
 
                 let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -1300,9 +1335,13 @@ async fn main() {
                 .item(&quit)
                 .build()?;
 
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
+            let tray_icon = build_tray_icon(app);
+            let tray_builder = TrayIconBuilder::new().icon(tray_icon).menu(&menu);
+
+            #[cfg(target_os = "macos")]
+            let tray_builder = tray_builder.icon_as_template(true);
+
+            let _tray = tray_builder
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "quit" => {
                         std::process::exit(0);
@@ -1379,14 +1418,8 @@ async fn main() {
 
                 // 启动时应用 Dock 图标配置
                 #[cfg(target_os = "macos")]
-                if state_guard.config.hide_dock_icon {
-                    use cocoa::appkit::{
-                        NSApp, NSApplication,
-                        NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
-                    };
-                    unsafe {
-                        NSApp().setActivationPolicy_(NSApplicationActivationPolicyAccessory);
-                    }
+                {
+                    commands::apply_dock_visibility(!state_guard.config.hide_dock_icon, false);
                 }
 
                 // decorations 配置由 tauri.conf.json 控制，用户可通过设置中的开关动态修改

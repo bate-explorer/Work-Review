@@ -113,7 +113,7 @@
           <span class="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Local Storage</span>
         </div>
         <p class="mx-auto mt-2 max-w-xl text-sm leading-7 text-slate-600 dark:text-slate-300">
-          当前截图、数据库、OCR 日志和配置都写入这个目录。更改位置可在设置页的“存储”中完成。
+          本地数据默认保存在这里，可在设置页“存储”中修改位置。
         </p>
         <p class="mx-auto mt-3 max-w-xl break-all rounded-xl border border-slate-200/80 bg-white/86 px-4 py-3 font-mono text-[13px] leading-6 text-slate-700 dark:border-slate-700/80 dark:bg-slate-900/52 dark:text-slate-300">
           {dataDir || '读取中...'}

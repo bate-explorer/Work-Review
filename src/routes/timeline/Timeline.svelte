@@ -4,7 +4,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-shell';
   import { cache } from '../../lib/stores/cache.js';
-  import { appIconStore, preloadAppIcons } from '../../lib/stores/iconCache.js';
+  import { appIconStore, getIconCacheKey, preloadAppIcons } from '../../lib/stores/iconCache.js';
   import { resolveAppIconSrc } from '../../lib/utils/appVisuals.js';
 
   // 获取本地日期（避免 UTC 时区问题）
@@ -91,8 +91,11 @@
     return mins > 0 ? `${hours}小时${mins}分` : `${hours}小时`;
   }
 
-  function getTimelineIconSrc(appName) {
-    return resolveAppIconSrc(appName, appIcons[appName]);
+  function getTimelineIconSrc(activity) {
+    return resolveAppIconSrc(
+      activity.app_name,
+      appIcons[getIconCacheKey({ appName: activity.app_name, executablePath: activity.executable_path })]
+    );
   }
 
   // 优化窗口标题显示
@@ -224,8 +227,15 @@
       activities.slice(0, 6).forEach(a => loadFullImage(a.screenshot_path));
       
       // 预加载应用图标（获取唯一应用名并批量加载）
-      const uniqueAppNames = [...new Set(activities.map(a => a.app_name))];
-      preloadAppIcons(uniqueAppNames, invoke);
+      const uniqueIconEntries = Array.from(
+        new Map(
+          activities.map((activity) => [
+            getIconCacheKey({ appName: activity.app_name, executablePath: activity.executable_path }),
+            { appName: activity.app_name, executablePath: activity.executable_path },
+          ])
+        ).values()
+      );
+      preloadAppIcons(uniqueIconEntries, invoke);
     } catch (e) {
       error = e.toString();
       console.error('获取时间线失败:', e);
@@ -251,7 +261,15 @@
         offset += moreActivities.length;
         // 预加载新图片
         moreActivities.forEach(a => loadThumbnail(a.screenshot_path));
-        preloadAppIcons([...new Set(moreActivities.map(a => a.app_name))], invoke);
+        const iconEntries = Array.from(
+          new Map(
+            moreActivities.map((activity) => [
+              getIconCacheKey({ appName: activity.app_name, executablePath: activity.executable_path }),
+              { appName: activity.app_name, executablePath: activity.executable_path },
+            ])
+          ).values()
+        );
+        preloadAppIcons(iconEntries, invoke);
       }
       
       if (moreActivities.length < PAGE_SIZE) {
@@ -485,8 +503,8 @@
               {info.color === 'red' ? 'bg-red-100 dark:bg-red-900/30' : ''}
               {info.color === 'gray' ? 'bg-slate-100 dark:bg-slate-700' : ''}
             ">
-              {#if getTimelineIconSrc(activity.app_name)}
-                <img src={getTimelineIconSrc(activity.app_name)}
+              {#if getTimelineIconSrc(activity)}
+                <img src={getTimelineIconSrc(activity)}
                      alt={activity.app_name}
                      class="w-7 h-7 rounded-md app-icon object-cover" />
               {:else}
@@ -572,8 +590,8 @@
               {info.color === 'red' ? 'bg-red-100 dark:bg-red-900/30' : ''}
               {info.color === 'gray' ? 'bg-slate-100 dark:bg-slate-700' : ''}
             ">
-              {#if getTimelineIconSrc(selectedActivity.app_name)}
-                <img src={getTimelineIconSrc(selectedActivity.app_name)}
+              {#if getTimelineIconSrc(selectedActivity)}
+                <img src={getTimelineIconSrc(selectedActivity)}
                      alt={selectedActivity.app_name}
                      class="w-9 h-9 rounded-lg app-icon object-cover" />
               {:else}

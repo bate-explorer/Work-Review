@@ -1,6 +1,6 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
-  import { appIconStore, preloadAppIcons } from '../stores/iconCache.js';
+  import { appIconStore, getIconCacheKey, preloadAppIcons } from '../stores/iconCache.js';
   import { resolveAppIconSrc } from '../utils/appVisuals.js';
 
   export let data = [];
@@ -33,7 +33,13 @@
 
   // 数据变化时预加载图标
   $: if (data) {
-    preloadAppIcons(displayApps.map(a => a.app_name), invoke);
+    preloadAppIcons(
+      displayApps.map(a => ({
+        appName: a.app_name,
+        executablePath: a.executable_path,
+      })),
+      invoke
+    );
   }
 
   // 展开时显示全部，收起时显示前 8
@@ -44,7 +50,10 @@
 
 <div class="space-y-2">
   {#each displayApps as app, i}
-    {@const iconSrc = resolveAppIconSrc(app.app_name, appIcons[app.app_name])}
+    {@const iconSrc = resolveAppIconSrc(
+      app.app_name,
+      appIcons[getIconCacheKey({ appName: app.app_name, executablePath: app.executable_path })]
+    )}
     <div class="flex items-center gap-2.5">
       <!-- 应用图标或序号 -->
       <div class="w-6 h-6 flex-shrink-0 flex items-center justify-center">

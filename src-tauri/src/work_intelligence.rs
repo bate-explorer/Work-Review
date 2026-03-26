@@ -975,6 +975,7 @@ mod tests {
             category: "development".to_string(),
             duration,
             browser_url: browser_url.map(|value| value.to_string()),
+            executable_path: None,
         }
     }
 

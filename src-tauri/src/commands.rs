@@ -2947,7 +2947,15 @@ pub async fn get_screenshot_full(
 /// 手动执行一次截屏
 #[tauri::command]
 pub async fn take_screenshot(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Activity, AppError> {
-    let (screenshot_result, app_name, window_title, browser_url, category, relative_path) = {
+    let (
+        screenshot_result,
+        app_name,
+        window_title,
+        browser_url,
+        category,
+        relative_path,
+        executable_path,
+    ) = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
 
         // 获取当前活动窗口
@@ -2976,6 +2984,7 @@ pub async fn take_screenshot(state: State<'_, Arc<Mutex<AppState>>>) -> Result<A
             active_window.browser_url,
             category,
             relative_path,
+            active_window.executable_path,
         )
     };
 
@@ -2990,6 +2999,7 @@ pub async fn take_screenshot(state: State<'_, Arc<Mutex<AppState>>>) -> Result<A
         category,
         duration: 30,
         browser_url,
+        executable_path,
     };
 
     // 保存到数据库
@@ -3383,51 +3393,7 @@ pub async fn get_ocr_install_guide() -> Result<serde_json::Value, AppError> {
 pub fn set_dock_visibility(visible: bool) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
-        use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy, NSImage};
-        use cocoa::base::nil;
-        use cocoa::foundation::NSString;
-        use objc::runtime::Object;
-
-        unsafe {
-            let app: *mut Object = NSApp();
-            if visible {
-                // 显示 Dock 图标: 切换回 Regular 策略
-                app.setActivationPolicy_(
-                    NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-                );
-
-                // 重新加载应用图标（切换 ActivationPolicy 后 macOS 会丢失图标）
-                // 使用 NSBundle.mainBundle 获取图标路径
-                let bundle: *mut Object = objc::msg_send![objc::class!(NSBundle), mainBundle];
-                let resource: *mut Object = objc::msg_send![
-                    bundle,
-                    pathForResource: NSString::alloc(nil).init_str("icon")
-                    ofType: NSString::alloc(nil).init_str("icns")
-                ];
-
-                // 如果 bundle 中找不到，尝试硬编码路径
-                let path_to_use = if resource != nil {
-                    resource
-                } else {
-                    NSString::alloc(nil)
-                        .init_str("/Applications/Work Review.app/Contents/Resources/icon.icns")
-                };
-
-                let image: *mut Object = NSImage::alloc(nil).initByReferencingFile_(path_to_use);
-                if image != nil {
-                    let _: () = objc::msg_send![app, setApplicationIconImage: image];
-                    log::info!("已重新设置 Dock 图标");
-                }
-
-                // 强制激活应用窗口
-                let _: () = objc::msg_send![app, activateIgnoringOtherApps: true];
-            } else {
-                // 隐藏 Dock 图标: 切换到 Accessory 策略
-                app.setActivationPolicy_(
-                    NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
-                );
-            }
-        }
+        apply_dock_visibility(visible, true);
         log::info!("Dock 图标可见性已设置为: {visible}");
     }
 
@@ -3439,16 +3405,88 @@ pub fn set_dock_visibility(visible: bool) -> Result<(), AppError> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn refresh_dock_icon(activate: bool) {
+    use cocoa::appkit::{NSApp, NSImage};
+    use cocoa::base::nil;
+    use cocoa::foundation::NSString;
+    use objc::runtime::Object;
+
+    unsafe {
+        let app: *mut Object = NSApp();
+
+        // 使用 NSBundle.mainBundle 获取图标路径
+        let bundle: *mut Object = objc::msg_send![objc::class!(NSBundle), mainBundle];
+        let resource: *mut Object = objc::msg_send![
+            bundle,
+            pathForResource: NSString::alloc(nil).init_str("icon")
+            ofType: NSString::alloc(nil).init_str("icns")
+        ];
+
+        // 如果 bundle 中找不到，尝试硬编码路径
+        let path_to_use = if resource != nil {
+            resource
+        } else {
+            NSString::alloc(nil)
+                .init_str("/Applications/Work Review.app/Contents/Resources/icon.icns")
+        };
+
+        let image: *mut Object = NSImage::alloc(nil).initByReferencingFile_(path_to_use);
+        if image != nil {
+            let _: () = objc::msg_send![app, setApplicationIconImage: image];
+            log::info!("已重新设置 Dock 图标");
+        }
+
+        if activate {
+            let _: () = objc::msg_send![app, activateIgnoringOtherApps: true];
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn apply_dock_visibility(visible: bool, activate: bool) {
+    use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
+    use objc::runtime::Object;
+
+    unsafe {
+        let app: *mut Object = NSApp();
+
+        if visible {
+            // 显示 Dock 图标: 切换回 Regular 策略
+            app.setActivationPolicy_(
+                NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
+            );
+
+            // 切换 ActivationPolicy 后主动重载图标，避免启动后 Dock 残留旧图标缓存
+            refresh_dock_icon(activate);
+        } else {
+            // 隐藏 Dock 图标: 切换到 Accessory 策略
+            app.setActivationPolicy_(
+                NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn apply_dock_visibility(_visible: bool, _activate: bool) {}
+
 /// 获取应用图标（Base64 PNG）
 /// 返回应用的图标，如果获取失败返回空字符串
 #[tauri::command]
-pub async fn get_app_icon(app_name: String) -> Result<String, AppError> {
-    get_app_icon_impl(&app_name).await
+pub async fn get_app_icon(
+    app_name: String,
+    executable_path: Option<String>,
+) -> Result<String, AppError> {
+    get_app_icon_impl(&app_name, executable_path.as_deref()).await
 }
 
 /// macOS 实现：使用 mdfind 获取应用图标（带磁盘缓存）
 #[cfg(target_os = "macos")]
-async fn get_app_icon_impl(app_name: &str) -> Result<String, AppError> {
+async fn get_app_icon_impl(
+    app_name: &str,
+    _executable_path: Option<&str>,
+) -> Result<String, AppError> {
     use std::path::Path;
     use std::process::Command;
 
@@ -3641,6 +3679,62 @@ async fn get_app_icon_impl(app_name: &str) -> Result<String, AppError> {
 /// Windows 实现：使用 Shell API 获取高清应用图标
 /// 优先提取 256x256 (JUMBO) 图标，降级到 48x48 (EXTRALARGE)，最后回退到 32x32
 /// 带磁盘缓存，避免重复启动 PowerShell
+#[cfg(any(target_os = "windows", test))]
+fn sanitize_icon_cache_name(value: &str) -> String {
+    let safe_name: String = value
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+
+    if safe_name.is_empty() {
+        "icon".to_string()
+    } else {
+        safe_name
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn build_windows_icon_cache_key(app_name: &str, executable_path: Option<&str>) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let safe_name = sanitize_icon_cache_name(app_name);
+    let Some(path) = executable_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    else {
+        return safe_name;
+    };
+
+    let mut hasher = DefaultHasher::new();
+    path.to_lowercase().hash(&mut hasher);
+    format!("{safe_name}_{:016x}", hasher.finish())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn merge_windows_icon_lookup_candidates(
+    executable_path: Option<&str>,
+    known_icon_paths: Vec<String>,
+) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let mut push_candidate = |value: &str| {
+        let candidate = value.trim().trim_matches('"').replace('/', "\\");
+        if !candidate.is_empty() && !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    };
+
+    if let Some(path) = executable_path {
+        push_candidate(path);
+    }
+
+    for path in known_icon_paths {
+        push_candidate(&path);
+    }
+
+    candidates
+}
+
 #[cfg(target_os = "windows")]
 fn windows_icon_process_candidates(app_name: &str) -> Vec<String> {
     let trimmed = app_name
@@ -3782,12 +3876,24 @@ fn windows_known_icon_paths(app_name: &str) -> Vec<String> {
             push_path(format!(r"{}\explorer.exe", windir));
         }
         "msedge" | "edge" | "microsoftedge" => {
-            push_path(format!(r"{}\Microsoft\Edge\Application\msedge.exe", program_files_x86));
-            push_path(format!(r"{}\Microsoft\Edge\Application\msedge.exe", program_files));
+            push_path(format!(
+                r"{}\Microsoft\Edge\Application\msedge.exe",
+                program_files_x86
+            ));
+            push_path(format!(
+                r"{}\Microsoft\Edge\Application\msedge.exe",
+                program_files
+            ));
         }
         "chrome" | "googlechrome" => {
-            push_path(format!(r"{}\Google\Chrome\Application\chrome.exe", program_files));
-            push_path(format!(r"{}\Google\Chrome\Application\chrome.exe", program_files_x86));
+            push_path(format!(
+                r"{}\Google\Chrome\Application\chrome.exe",
+                program_files
+            ));
+            push_path(format!(
+                r"{}\Google\Chrome\Application\chrome.exe",
+                program_files_x86
+            ));
         }
         "wechat" | "weixin" => {
             push_path(format!(r"{}\Tencent\WeChat\WeChat.exe", program_files_x86));
@@ -3798,19 +3904,37 @@ fn windows_known_icon_paths(app_name: &str) -> Vec<String> {
             push_path(format!(r"{}\Tencent\WeCom\WXWork.exe", program_files));
         }
         "obsidian" => {
-            push_path(format!(r"{}\Programs\Obsidian\Obsidian.exe", local_app_data));
+            push_path(format!(
+                r"{}\Programs\Obsidian\Obsidian.exe",
+                local_app_data
+            ));
         }
         "pixpin" => {
             push_path(format!(r"{}\PixPin\PixPin.exe", local_app_data));
         }
         "xshell" => {
-            push_path(format!(r"{}\NetSarang Computer\7\Xshell.exe", program_files_x86));
-            push_path(format!(r"{}\NetSarang Computer\7\Xshell.exe", program_files));
-            push_path(format!(r"{}\NetSarang Computer\8\Xshell.exe", program_files_x86));
-            push_path(format!(r"{}\NetSarang Computer\8\Xshell.exe", program_files));
+            push_path(format!(
+                r"{}\NetSarang Computer\7\Xshell.exe",
+                program_files_x86
+            ));
+            push_path(format!(
+                r"{}\NetSarang Computer\7\Xshell.exe",
+                program_files
+            ));
+            push_path(format!(
+                r"{}\NetSarang Computer\8\Xshell.exe",
+                program_files_x86
+            ));
+            push_path(format!(
+                r"{}\NetSarang Computer\8\Xshell.exe",
+                program_files
+            ));
         }
         "wechatappex" => {
-            push_path(format!(r"{}\Tencent\WeChat\XPlugin\Plugins\WeChatAppEx\WeChatAppEx.exe", app_data));
+            push_path(format!(
+                r"{}\Tencent\WeChat\XPlugin\Plugins\WeChatAppEx\WeChatAppEx.exe",
+                app_data
+            ));
         }
         _ => {}
     }
@@ -3819,21 +3943,25 @@ fn windows_known_icon_paths(app_name: &str) -> Vec<String> {
 }
 
 #[cfg(target_os = "windows")]
-async fn get_app_icon_impl(app_name: &str) -> Result<String, AppError> {
+async fn get_app_icon_impl(
+    app_name: &str,
+    executable_path: Option<&str>,
+) -> Result<String, AppError> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     // CREATE_NO_WINDOW 标志
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    const WINDOWS_ICON_CACHE_VERSION: &str = "v3";
+    const WINDOWS_ICON_CACHE_VERSION: &str = "v4";
 
     // 磁盘缓存：检查是否已有缓存
     let cache_dir = std::env::temp_dir().join("work_review_icons");
     let _ = std::fs::create_dir_all(&cache_dir);
-    let cache_key_name = crate::monitor::normalize_display_app_name(app_name);
-    let safe_name =
-        cache_key_name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
-    let cache_file = cache_dir.join(format!("{safe_name}_{WINDOWS_ICON_CACHE_VERSION}.b64"));
+    let cache_key = build_windows_icon_cache_key(
+        &crate::monitor::normalize_display_app_name(app_name),
+        executable_path,
+    );
+    let cache_file = cache_dir.join(format!("{cache_key}_{WINDOWS_ICON_CACHE_VERSION}.b64"));
 
     if cache_file.exists() {
         if let Ok(metadata) = std::fs::metadata(&cache_file) {
@@ -3850,25 +3978,25 @@ async fn get_app_icon_impl(app_name: &str) -> Result<String, AppError> {
         }
     }
 
-    let process_candidates = windows_icon_process_candidates(app_name);
-    let known_icon_paths = windows_known_icon_paths(app_name)
-        .into_iter()
-        .filter(|path| std::path::Path::new(path).exists())
-        .collect::<Vec<_>>();
-    let ps_candidates = process_candidates
-        .iter()
-        .map(|candidate| format!("'{}'", candidate.replace('\'', "''")))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let ps_path_candidates = known_icon_paths
+    let icon_lookup_candidates = merge_windows_icon_lookup_candidates(
+        executable_path,
+        windows_known_icon_paths(app_name)
+            .into_iter()
+            .filter(|path| std::path::Path::new(path).exists())
+            .collect::<Vec<_>>(),
+    );
+    if icon_lookup_candidates.is_empty() {
+        return Ok(String::new());
+    }
+
+    let ps_path_candidates = icon_lookup_candidates
         .iter()
         .map(|path| format!("'{}'", path.replace('\'', "''")))
         .collect::<Vec<_>>()
         .join(", ");
-    let title_hint = app_name.to_lowercase().replace('\'', "''");
 
-    // PowerShell 脚本：使用 SHGetImageList 提取 JUMBO (256x256) 图标
-    // 降级链：JUMBO → EXTRALARGE (48x48) → ExtractAssociatedIcon (32x32)
+    // PowerShell 脚本：仅对明确的可执行路径提取图标。
+    // 这里不再扫描注册表、开始菜单快捷方式或全部运行进程，避免被安全软件误判。
     let ps_script = format!(
         r#"
 Add-Type -AssemblyName System.Drawing
@@ -3956,233 +4084,18 @@ public class JumboIconExtractor {{
 }}
 '@
 
-function Normalize-Key([string]$value) {{
-    if (-not $value) {{ return "" }}
-    return (($value.ToLower()) -replace '[^a-z0-9]+', '')
-}}
-
-$candidates = @({})
 $pathCandidates = @({})
-$candidateKeys = @($candidates | ForEach-Object {{ Normalize-Key $_ }} | Where-Object {{ $_ }} | Select-Object -Unique)
-$script:shortcutShell = $null
-$app = $null
-$processes = Get-Process -ErrorAction SilentlyContinue | Where-Object {{ $_.Path }}
-
-function Matches-CandidateKey([string]$value) {{
-    $valueKey = Normalize-Key $value
-    if (-not $valueKey) {{ return $false }}
-
-    foreach ($candidateKey in $candidateKeys) {{
-        if (-not $candidateKey) {{ continue }}
-        if ($valueKey.Contains($candidateKey)) {{ return $true }}
-        if ($valueKey.Length -ge 4 -and $candidateKey.Contains($valueKey)) {{ return $true }}
-    }}
-
-    return $false
-}}
-
-function Resolve-ShortcutTarget([string]$shortcutPath) {{
-    if (-not $shortcutPath -or -not (Test-Path $shortcutPath -PathType Leaf)) {{
-        return $null
-    }}
-
-    try {{
-        if (-not $script:shortcutShell) {{
-            $script:shortcutShell = New-Object -ComObject WScript.Shell
-        }}
-
-        $shortcut = $script:shortcutShell.CreateShortcut($shortcutPath)
-        if ($shortcut -and $shortcut.TargetPath) {{
-            return $shortcut.TargetPath
-        }}
-    }} catch {{
-    }}
-
-    return $null
-}}
-
-function Resolve-ExecutablePath([string]$rawPath) {{
-    if ([string]::IsNullOrWhiteSpace($rawPath)) {{
-        return $null
-    }}
-
-    $candidate = $rawPath.Trim()
-    $candidate = $candidate -replace '^(\\\\\?\\|\\\?\?\\)', ''
-
-    if ($candidate -match '^(?<path>([A-Za-z]:\\|\\\\)[^"]+?\.(exe|lnk|ico))(\s+.*|,.*)?$') {{
-        $candidate = $matches['path']
-    }} else {{
-        $candidate = $candidate.Trim('"')
-    }}
-
-    if ($candidate.EndsWith('.lnk', [System.StringComparison]::OrdinalIgnoreCase)) {{
-        $shortcutTarget = Resolve-ShortcutTarget $candidate
-        if ($shortcutTarget) {{
-            return Resolve-ExecutablePath $shortcutTarget
-        }}
-        return $null
-    }}
-
-    if (Test-Path $candidate -PathType Leaf) {{
-        return $candidate
-    }}
-
-    return $null
-}}
-
-function Find-MatchingExecutableInDirectory([string]$directory) {{
-    if ([string]::IsNullOrWhiteSpace($directory) -or -not (Test-Path $directory -PathType Container)) {{
-        return $null
-    }}
-
-    $executables = Get-ChildItem -Path $directory -Filter *.exe -File -ErrorAction SilentlyContinue
-    foreach ($exe in $executables) {{
-        if (Matches-CandidateKey $exe.BaseName) {{
-            return $exe.FullName
-        }}
-    }}
-
-    return $null
-}}
-
-function Find-RegistryExecutable() {{
-    $uninstallPatterns = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKCU:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
-    )
-
-    foreach ($pattern in $uninstallPatterns) {{
-        $entries = Get-ItemProperty -Path $pattern -ErrorAction SilentlyContinue
-        foreach ($entry in $entries) {{
-            if (-not (Matches-CandidateKey $entry.DisplayName) `
-                -and -not (Matches-CandidateKey $entry.PSChildName) `
-                -and -not (Matches-CandidateKey $entry.DisplayIcon) `
-                -and -not (Matches-CandidateKey $entry.InstallLocation)) {{
-                continue
-            }}
-
-            $resolved = Resolve-ExecutablePath $entry.DisplayIcon
-            if ($resolved) {{
-                return $resolved
-            }}
-
-            $resolved = Find-MatchingExecutableInDirectory $entry.InstallLocation
-            if ($resolved) {{
-                return $resolved
-            }}
-        }}
-    }}
-
-    $appPathRoots = @(
-        'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths',
-        'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths',
-        'Registry::HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths'
-    )
-
-    foreach ($root in $appPathRoots) {{
-        if (-not (Test-Path $root)) {{
-            continue
-        }}
-
-        $items = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
-        foreach ($item in $items) {{
-            if (-not (Matches-CandidateKey $item.PSChildName)) {{
-                continue
-            }}
-
-            try {{
-                $resolved = Resolve-ExecutablePath $item.GetValue('')
-                if ($resolved) {{
-                    return $resolved
-                }}
-            }} catch {{
-            }}
-
-            try {{
-                $resolved = Find-MatchingExecutableInDirectory $item.GetValue('Path')
-                if ($resolved) {{
-                    return $resolved
-                }}
-            }} catch {{
-            }}
-        }}
-    }}
-
-    return $null
-}}
-
-function Find-ShortcutExecutable() {{
-    $shortcutRoots = @(
-        (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'),
-        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
-        (Join-Path $env:PUBLIC 'Desktop'),
-        (Join-Path $env:USERPROFILE 'Desktop')
-    ) | Where-Object {{ $_ -and (Test-Path $_) }}
-
-    foreach ($root in $shortcutRoots) {{
-        $shortcut = Get-ChildItem -Path $root -Filter *.lnk -File -Recurse -ErrorAction SilentlyContinue |
-            Where-Object {{ Matches-CandidateKey $_.BaseName -or Matches-CandidateKey $_.Name }} |
-            Select-Object -First 1
-
-        if (-not $shortcut) {{
-            continue
-        }}
-
-        $resolved = Resolve-ExecutablePath $shortcut.FullName
-        if ($resolved) {{
-            return $resolved
-        }}
-    }}
-
-    return $null
-}}
-
-foreach ($candidate in $candidates) {{
-    $candidateKey = Normalize-Key $candidate
-    if (-not $candidateKey) {{ continue }}
-
-    $app = $processes | Where-Object {{
-        (Normalize-Key $_.ProcessName) -eq $candidateKey -or
-        (Normalize-Key [System.IO.Path]::GetFileNameWithoutExtension($_.Path)) -eq $candidateKey
-    }} | Select-Object -First 1
-
-    if ($app) {{ break }}
-}}
-
-if (-not $app) {{
-    $titleHint = '{}'
-    $app = $processes | Where-Object {{
-        $_.MainWindowTitle -and $_.MainWindowTitle.ToLower().Contains($titleHint)
-    }} | Select-Object -First 1
-}}
-
-if ($app -and $app.Path) {{
-    [JumboIconExtractor]::Extract($app.Path)
-    exit 0
-}}
-
 foreach ($candidatePath in $pathCandidates) {{
     if (-not [string]::IsNullOrWhiteSpace($candidatePath) -and (Test-Path $candidatePath)) {{
-        [JumboIconExtractor]::Extract($candidatePath)
-        exit 0
+        $iconBase64 = [JumboIconExtractor]::Extract($candidatePath)
+        if (-not [string]::IsNullOrWhiteSpace($iconBase64)) {{
+            Write-Output $iconBase64
+            exit 0
+        }}
     }}
 }}
-
-$registryPath = Find-RegistryExecutable
-if ($registryPath) {{
-    [JumboIconExtractor]::Extract($registryPath)
-    exit 0
-}}
-
-$shortcutPath = Find-ShortcutExecutable
-if ($shortcutPath) {{
-    [JumboIconExtractor]::Extract($shortcutPath)
-    exit 0
-}}
 "#,
-        ps_candidates, ps_path_candidates, title_hint
+        ps_path_candidates
     );
 
     let output = Command::new("powershell")
@@ -4211,8 +4124,50 @@ if ($shortcutPath) {{
 
 /// 其他平台：返回空字符串
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-async fn get_app_icon_impl(_app_name: &str) -> Result<String, AppError> {
+async fn get_app_icon_impl(
+    _app_name: &str,
+    _executable_path: Option<&str>,
+) -> Result<String, AppError> {
     Ok(String::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_windows_icon_cache_key, merge_windows_icon_lookup_candidates};
+
+    #[test]
+    fn windows图标候选应优先真实路径并去重() {
+        let candidates = merge_windows_icon_lookup_candidates(
+            Some(r"D:\Portable\Code\Code.exe"),
+            vec![
+                r"C:\Program Files\Microsoft VS Code\Code.exe".to_string(),
+                r"D:\Portable\Code\Code.exe".to_string(),
+                r"C:\Program Files\Microsoft VS Code\Code.exe".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            candidates,
+            vec![
+                r"D:\Portable\Code\Code.exe".to_string(),
+                r"C:\Program Files\Microsoft VS Code\Code.exe".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn windows图标缓存key应包含真实路径特征() {
+        let portable_key =
+            build_windows_icon_cache_key("VS Code", Some(r"D:\Portable\Code\Code.exe"));
+        let installed_key = build_windows_icon_cache_key(
+            "VS Code",
+            Some(r"C:\Program Files\Microsoft VS Code\Code.exe"),
+        );
+
+        assert_ne!(portable_key, installed_key);
+        assert!(portable_key.starts_with("VS_Code_"));
+        assert!(installed_key.starts_with("VS_Code_"));
+    }
 }
 
 /// 保存背景图片（接收 base64 编码的图片数据）

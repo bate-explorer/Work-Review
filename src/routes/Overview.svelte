@@ -5,7 +5,7 @@
   import StatsCard from '../lib/components/StatsCard.svelte';
   import AppUsageChart from '../lib/components/AppUsageChart.svelte';
   import { cache } from '../lib/stores/cache.js';
-  import { appIconStore, preloadAppIcons } from '../lib/stores/iconCache.js';
+  import { appIconStore, getIconCacheKey, preloadAppIcons } from '../lib/stores/iconCache.js';
   import { resolveAppIconSrc } from '../lib/utils/appVisuals.js';
 
   let stats = null;
@@ -30,14 +30,20 @@
 
   // 响应式图标加载：stats 变化时自动触发
   $: if (stats) {
-    const names = [];
+    const iconEntries = [];
     if (stats.browser_usage) {
-      stats.browser_usage.forEach(b => names.push(b.browser_name));
+      stats.browser_usage.forEach(b => iconEntries.push({
+        appName: b.browser_name,
+        executablePath: b.executable_path,
+      }));
     }
     if (stats.app_usage) {
-      stats.app_usage.slice(0, 10).forEach(a => names.push(a.app_name));
+      stats.app_usage.slice(0, 10).forEach(a => iconEntries.push({
+        appName: a.app_name,
+        executablePath: a.executable_path,
+      }));
     }
-    preloadAppIcons(names, invoke);
+    preloadAppIcons(iconEntries, invoke);
   }
 
   function formatDuration(seconds) {
@@ -50,8 +56,11 @@
     return `${secs}秒`;
   }
 
-  function getAppIconSrc(appName) {
-    return resolveAppIconSrc(appName, appIcons[appName]);
+  function getAppIconSrc(appName, executablePath = null) {
+    return resolveAppIconSrc(
+      appName,
+      appIcons[getIconCacheKey({ appName, executablePath })]
+    );
   }
 
   async function refreshOverviewStats({ silent = false } = {}) {
@@ -221,8 +230,8 @@
             on:click={() => selectedBrowser = browser}
           >
             <div class="flex items-center gap-2 mb-1.5">
-              {#if getAppIconSrc(browser.browser_name)}
-                <img src={getAppIconSrc(browser.browser_name)} alt="" class="w-6 h-6 rounded-md object-cover" />
+              {#if getAppIconSrc(browser.browser_name, browser.executable_path)}
+                <img src={getAppIconSrc(browser.browser_name, browser.executable_path)} alt="" class="w-6 h-6 rounded-md object-cover" />
               {:else}
                 <span class="text-xl">🌐</span>
               {/if}

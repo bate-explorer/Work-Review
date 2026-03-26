@@ -39,6 +39,9 @@ pub struct Activity {
     /// 浏览器 URL（如果当前是浏览器应用）
     #[serde(default)]
     pub browser_url: Option<String>,
+    /// 可执行文件路径（主要用于 Windows 图标读取）
+    #[serde(default)]
+    pub executable_path: Option<String>,
 }
 
 /// 每日报告
@@ -57,6 +60,8 @@ pub struct AppUsage {
     pub app_name: String,
     pub duration: i64,
     pub count: i64,
+    #[serde(default)]
+    pub executable_path: Option<String>,
 }
 
 /// 分类使用统计
@@ -127,6 +132,8 @@ pub struct BrowserUsage {
     pub browser_name: String,
     /// 总使用时长
     pub duration: i64,
+    #[serde(default)]
+    pub executable_path: Option<String>,
     /// 该浏览器下访问的域名列表
     pub domains: Vec<DomainUsage>,
 }
@@ -282,7 +289,8 @@ impl Database {
                 ocr_text TEXT,
                 category TEXT NOT NULL,
                 duration INTEGER NOT NULL,
-                browser_url TEXT
+                browser_url TEXT,
+                executable_path TEXT
             )",
             [],
         )?;
@@ -327,6 +335,8 @@ impl Database {
 
         // 迁移：添加 browser_url 列（如果不存在）
         let _ = conn.execute("ALTER TABLE activities ADD COLUMN browser_url TEXT", []);
+        // 迁移：添加 executable_path 列（如果不存在）
+        let _ = conn.execute("ALTER TABLE activities ADD COLUMN executable_path TEXT", []);
 
         Ok(())
     }
@@ -344,8 +354,8 @@ impl Database {
             .filter(|url| !url.is_empty());
 
         conn.execute(
-            "INSERT INTO activities (timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO activities (timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 activity.timestamp,
                 activity.app_name,
@@ -355,6 +365,7 @@ impl Database {
                 activity.category,
                 activity.duration,
                 normalized_browser_url,
+                activity.executable_path,
             ],
         )?;
 
@@ -371,10 +382,10 @@ impl Database {
         let start_ts = chrono::Local::now().timestamp() - 86400;
 
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url 
-             FROM activities 
+            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path
+             FROM activities
              WHERE app_name = ?1 AND timestamp >= ?2
-             ORDER BY id DESC 
+             ORDER BY id DESC
              LIMIT 1"
         )?;
 
@@ -390,6 +401,7 @@ impl Database {
                 category: row.get(6)?,
                 duration: row.get(7)?,
                 browser_url: row.get(8)?,
+                executable_path: row.get(9)?,
             }))
         } else {
             Ok(None)
@@ -406,10 +418,10 @@ impl Database {
         let start_ts = chrono::Local::now().timestamp() - 86400;
 
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url 
-             FROM activities 
+            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path
+             FROM activities
              WHERE browser_url = ?1 AND timestamp >= ?2
-             ORDER BY id DESC 
+             ORDER BY id DESC
              LIMIT 1"
         )?;
 
@@ -425,6 +437,7 @@ impl Database {
                 category: row.get(6)?,
                 duration: row.get(7)?,
                 browser_url: row.get(8)?,
+                executable_path: row.get(9)?,
             }))
         } else {
             Ok(None)
@@ -445,7 +458,7 @@ impl Database {
         };
 
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url
+            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path
              FROM activities
              WHERE app_name = ?1 AND timestamp >= ?2
              ORDER BY id DESC
@@ -464,6 +477,7 @@ impl Database {
                 category: row.get(6)?,
                 duration: row.get(7)?,
                 browser_url: row.get(8)?,
+                executable_path: row.get(9)?,
             }))
         } else {
             Ok(None)
@@ -488,7 +502,7 @@ impl Database {
         };
 
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url
+            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path
              FROM activities
              WHERE app_name = ?1 AND window_title = ?2 AND timestamp >= ?3
              ORDER BY id DESC
@@ -507,6 +521,7 @@ impl Database {
                 category: row.get(6)?,
                 duration: row.get(7)?,
                 browser_url: row.get(8)?,
+                executable_path: row.get(9)?,
             }))
         } else {
             Ok(None)
@@ -532,10 +547,10 @@ impl Database {
 
         // 使用 RTRIM 规范化数据库中的 URL 进行比较
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url 
-             FROM activities 
+            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path
+             FROM activities
              WHERE RTRIM(browser_url, '/') = ?1 AND timestamp >= ?2
-             ORDER BY id DESC 
+             ORDER BY id DESC
              LIMIT 1"
         )?;
 
@@ -551,6 +566,7 @@ impl Database {
                 category: row.get(6)?,
                 duration: row.get(7)?,
                 browser_url: row.get(8)?,
+                executable_path: row.get(9)?,
             }))
         } else {
             Ok(None)
@@ -564,7 +580,7 @@ impl Database {
         })?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url 
+            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path
              FROM activities WHERE id = ?1"
         )?;
 
@@ -580,6 +596,7 @@ impl Database {
                 category: row.get(6)?,
                 duration: row.get(7)?,
                 browser_url: row.get(8)?,
+                executable_path: row.get(9)?,
             }))
         } else {
             Ok(None)
@@ -862,41 +879,63 @@ impl Database {
 
         // 获取应用使用统计
         let mut stmt = conn.prepare(
-            "SELECT app_name, SUM(duration) as total_duration, COUNT(*) as count 
-             FROM activities 
-             WHERE timestamp >= ?1 AND timestamp < ?2 
-             GROUP BY app_name 
+            "SELECT app_name,
+                    COALESCE(executable_path, '') as executable_path,
+                    SUM(duration) as total_duration,
+                    COUNT(*) as count,
+                    MAX(timestamp) as latest_timestamp
+             FROM activities
+             WHERE timestamp >= ?1 AND timestamp < ?2
+             GROUP BY app_name, COALESCE(executable_path, '')
              ORDER BY total_duration DESC",
         )?;
 
-        let app_usage_rows: Vec<AppUsage> = stmt
+        let app_usage_rows: Vec<(AppUsage, i64)> = stmt
             .query_map(params![start_ts, end_ts], |row| {
-                Ok(AppUsage {
-                    app_name: row.get(0)?,
-                    duration: row.get(1)?,
-                    count: row.get(2)?,
-                })
+                let executable_path: String = row.get(1)?;
+                Ok((
+                    AppUsage {
+                        app_name: row.get(0)?,
+                        duration: row.get(2)?,
+                        count: row.get(3)?,
+                        executable_path: if executable_path.is_empty() {
+                            None
+                        } else {
+                            Some(executable_path)
+                        },
+                    },
+                    row.get(4)?,
+                ))
             })?
             .filter_map(|r| r.ok())
             .collect();
 
         // 在 Rust 侧按显示名再次聚合，避免 work-review / Work Review 等别名被拆成多条
-        let mut app_usage_map: std::collections::HashMap<String, AppUsage> =
+        let mut app_usage_map: std::collections::HashMap<String, (AppUsage, i64)> =
             std::collections::HashMap::new();
-        for usage in app_usage_rows {
+        for (usage, latest_timestamp) in app_usage_rows {
             let normalized_name = crate::monitor::normalize_display_app_name(&usage.app_name);
-            let entry = app_usage_map
-                .entry(normalized_name.clone())
-                .or_insert(AppUsage {
+            let entry = app_usage_map.entry(normalized_name.clone()).or_insert((
+                AppUsage {
                     app_name: normalized_name,
                     duration: 0,
                     count: 0,
-                });
-            entry.duration += usage.duration;
-            entry.count += usage.count;
+                    executable_path: None,
+                },
+                0,
+            ));
+            entry.0.duration += usage.duration;
+            entry.0.count += usage.count;
+            if latest_timestamp >= entry.1 {
+                entry.0.executable_path = usage.executable_path.clone();
+                entry.1 = latest_timestamp;
+            }
         }
 
-        let mut app_usage: Vec<AppUsage> = app_usage_map.into_values().collect();
+        let mut app_usage: Vec<AppUsage> = app_usage_map
+            .into_values()
+            .map(|(usage, _)| usage)
+            .collect();
         app_usage.sort_by(|a, b| {
             b.duration
                 .cmp(&a.duration)
@@ -937,26 +976,33 @@ impl Database {
         // 1. 优先使用已写入的 browser_url
         // 2. browser_url 为空时，从窗口标题 / OCR 文本推断页面或站点
         let mut browser_activity_stmt = conn.prepare(
-            "SELECT app_name, browser_url, window_title, ocr_text, duration
+            "SELECT app_name, browser_url, window_title, ocr_text, duration, executable_path
              FROM activities
              WHERE timestamp >= ?1 AND timestamp < ?2
                AND category = 'browser'
              ORDER BY timestamp DESC",
         )?;
 
-        let browser_activity_rows: Vec<(String, Option<String>, String, Option<String>, i64)> =
-            browser_activity_stmt
-                .query_map(params![start_ts, end_ts], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ))
-                })?
-                .filter_map(|r| r.ok())
-                .collect();
+        let browser_activity_rows: Vec<(
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            i64,
+            Option<String>,
+        )> = browser_activity_stmt
+            .query_map(params![start_ts, end_ts], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
 
         // 按浏览器 -> 域名 -> URL 三级结构组织数据
         // 结构: { browser_name: { domain: { url: duration } } }
@@ -966,14 +1012,21 @@ impl Database {
         > = std::collections::HashMap::new();
         let mut browser_duration_map: std::collections::HashMap<String, i64> =
             std::collections::HashMap::new();
+        let mut browser_path_map: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
         let mut url_duration_map: std::collections::HashMap<String, i64> =
             std::collections::HashMap::new();
 
-        for (app_name, browser_url, window_title, ocr_text, duration) in browser_activity_rows {
+        for (app_name, browser_url, window_title, ocr_text, duration, executable_path) in
+            browser_activity_rows
+        {
             let normalized_browser_name = crate::monitor::normalize_display_app_name(&app_name);
             *browser_duration_map
                 .entry(normalized_browser_name.clone())
                 .or_insert(0) += duration;
+            browser_path_map
+                .entry(normalized_browser_name.clone())
+                .or_insert(executable_path.clone());
 
             let page_hint = browser_url
                 .as_deref()
@@ -1035,6 +1088,7 @@ impl Database {
                 BrowserUsage {
                     browser_name: browser_name.clone(),
                     duration: *total_duration,
+                    executable_path: browser_path_map.get(browser_name).cloned().flatten(),
                     domains,
                 }
             })
@@ -1129,10 +1183,11 @@ impl Database {
                     window_title,
                     screenshot_path,
                     ocr_text,
-                    category,
-                    duration,
-                    COALESCE(RTRIM(browser_url, '/'), '') as browser_url,
-                    ROW_NUMBER() OVER (
+                category,
+                duration,
+                COALESCE(RTRIM(browser_url, '/'), '') as browser_url,
+                executable_path,
+                ROW_NUMBER() OVER (
                         PARTITION BY
                             app_name,
                             CASE
@@ -1161,7 +1216,8 @@ impl Database {
                 ocr_text,
                 category,
                 total_duration,
-                browser_url
+                browser_url,
+                executable_path
              FROM ranked
              WHERE rn = 1
              ORDER BY timestamp DESC, id DESC
@@ -1185,6 +1241,7 @@ impl Database {
                     } else {
                         Some(browser_url)
                     },
+                    executable_path: row.get(9)?,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -1209,7 +1266,7 @@ impl Database {
         let (start_ts, end_ts) = parse_date_bounds(date_from, date_to);
 
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url
+            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path
              FROM activities
              WHERE (?1 IS NULL OR timestamp >= ?1)
                AND (?2 IS NULL OR timestamp < ?2)
@@ -1229,6 +1286,7 @@ impl Database {
                     category: row.get(6)?,
                     duration: row.get(7)?,
                     browser_url: row.get(8)?,
+                    executable_path: row.get(9)?,
                 })
             })?
             .filter_map(|row| row.ok())
@@ -1381,9 +1439,9 @@ impl Database {
         let end_ts = start_ts + 3600; // 1小时
 
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url 
-             FROM activities 
-             WHERE timestamp >= ?1 AND timestamp < ?2 
+            "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path
+             FROM activities
+             WHERE timestamp >= ?1 AND timestamp < ?2
              ORDER BY timestamp ASC"
         )?;
 
@@ -1399,6 +1457,7 @@ impl Database {
                     category: row.get(6)?,
                     duration: row.get(7)?,
                     browser_url: row.get(8)?,
+                    executable_path: row.get(9)?,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -1721,6 +1780,7 @@ mod tests {
                 category: "development".to_string(),
                 duration: 10,
                 browser_url: None,
+                executable_path: None,
             },
             Activity {
                 id: None,
@@ -1732,6 +1792,7 @@ mod tests {
                 category: "development".to_string(),
                 duration: 25,
                 browser_url: None,
+                executable_path: None,
             },
             Activity {
                 id: None,
@@ -1743,6 +1804,7 @@ mod tests {
                 category: "development".to_string(),
                 duration: 15,
                 browser_url: None,
+                executable_path: None,
             },
         ];
 
@@ -1787,6 +1849,7 @@ mod tests {
                 category: "development".to_string(),
                 duration: 540,
                 browser_url: None,
+                executable_path: None,
             },
             Activity {
                 id: None,
@@ -1798,6 +1861,7 @@ mod tests {
                 category: "development".to_string(),
                 duration: 540,
                 browser_url: None,
+                executable_path: None,
             },
             Activity {
                 id: None,
@@ -1809,6 +1873,7 @@ mod tests {
                 category: "development".to_string(),
                 duration: 300,
                 browser_url: None,
+                executable_path: None,
             },
         ];
 
@@ -1837,6 +1902,60 @@ mod tests {
             0
         );
         assert_eq!(stats.app_usage.len(), 2);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn 时间线应返回最新记录的可执行路径() {
+        let db_path = temp_db_path("timeline-executable-path");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let now = chrono::Local::now().timestamp();
+        let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+        let records = vec![
+            Activity {
+                id: None,
+                timestamp: now - 30,
+                app_name: "Code".to_string(),
+                window_title: "文件A".to_string(),
+                screenshot_path: "shot-a.jpg".to_string(),
+                ocr_text: Some("old".to_string()),
+                category: "development".to_string(),
+                duration: 10,
+                browser_url: None,
+                executable_path: Some(
+                    r"C:\Users\wmy\AppData\Local\Programs\Microsoft VS Code\Code.exe".to_string(),
+                ),
+            },
+            Activity {
+                id: None,
+                timestamp: now - 10,
+                app_name: "Code".to_string(),
+                window_title: "文件A".to_string(),
+                screenshot_path: "shot-b.jpg".to_string(),
+                ocr_text: Some("new".to_string()),
+                category: "development".to_string(),
+                duration: 25,
+                browser_url: None,
+                executable_path: Some(r"D:\Portable\Code\Code.exe".to_string()),
+            },
+        ];
+
+        for activity in &records {
+            db.insert_activity(activity).expect("插入测试数据失败");
+        }
+
+        let timeline = db.get_timeline(&date, None, None).expect("读取时间线失败");
+        let file_a = timeline
+            .iter()
+            .find(|activity| activity.window_title == "文件A")
+            .expect("未找到文件A记录");
+
+        assert_eq!(
+            file_a.executable_path.as_deref(),
+            Some(r"D:\Portable\Code\Code.exe")
+        );
 
         let _ = std::fs::remove_file(db_path);
     }

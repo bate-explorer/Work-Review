@@ -65,6 +65,8 @@ pub struct ActiveWindow {
     pub window_title: String,
     /// 浏览器 URL（如果当前应用是浏览器）
     pub browser_url: Option<String>,
+    /// 当前窗口对应的可执行文件路径（Windows 优先）
+    pub executable_path: Option<String>,
 }
 
 /// 判断进程名是否属于系统/桌面 shell 进程（不应记录使用时长）
@@ -377,6 +379,12 @@ pub fn get_active_window() -> Result<ActiveWindow> {
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, &mut pid);
 
+        let executable_path = if pid > 0 {
+            get_process_image_path(pid)
+        } else {
+            None
+        };
+
         // 获取进程名，使用多级备用策略确保 Win10 低权限下能正确读取
         let raw_app_name = if pid > 0 {
             // 方法一：PROCESS_QUERY_LIMITED_INFORMATION + GetModuleBaseNameW
@@ -429,7 +437,14 @@ pub fn get_active_window() -> Result<ActiveWindow> {
                     get_process_name_by_image(pid).unwrap_or_else(|| {
                         // 方法四：从窗口标题最后一段推断（如 "文件名 - 应用名" 取最后段）
                         // 避免进程全部落入 Unknown 导致时长无法区分统计
-                        if !window_title.is_empty() {
+                        if let Some(name_from_path) = executable_path.as_deref().and_then(|path| {
+                            std::path::Path::new(path)
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .map(|name| name.to_string())
+                        }) {
+                            name_from_path
+                        } else if !window_title.is_empty() {
                             window_title
                                 .split(" - ")
                                 .last()
@@ -455,14 +470,14 @@ pub fn get_active_window() -> Result<ActiveWindow> {
             app_name,
             window_title,
             browser_url,
+            executable_path,
         })
     }
 }
 
-/// 通过 QueryFullProcessImageNameW 获取进程可执行文件名，仅需低权限
-/// 返回 exe 文件名（不含路径，如 "WINWORD.EXE"），作为 GetModuleBaseNameW 的备用
+/// 通过 QueryFullProcessImageNameW 获取进程可执行文件完整路径，仅需低权限
 #[cfg(target_os = "windows")]
-fn get_process_name_by_image(pid: u32) -> Option<String> {
+fn get_process_image_path(pid: u32) -> Option<String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use winapi::um::handleapi::CloseHandle;
@@ -485,17 +500,35 @@ fn get_process_name_by_image(pid: u32) -> Option<String> {
             return None;
         }
 
-        // 返回完整路径（如 C:\...\WINWORD.EXE），提取最后一段作为进程名
-        let full_path = OsString::from_wide(&buf[..size as usize])
-            .to_string_lossy()
-            .to_string();
+        normalize_executable_path(
+            &OsString::from_wide(&buf[..size as usize])
+                .to_string_lossy()
+                .to_string(),
+        )
+    }
+}
 
+/// 通过 QueryFullProcessImageNameW 获取进程可执行文件名，仅需低权限
+/// 返回 exe 文件名（不含路径，如 "WINWORD.EXE"），作为 GetModuleBaseNameW 的备用
+#[cfg(target_os = "windows")]
+fn get_process_name_by_image(pid: u32) -> Option<String> {
+    get_process_image_path(pid).and_then(|full_path| {
         full_path
             .split('\\')
             .last()
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty())
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_executable_path(path: &str) -> Option<String> {
+    let trimmed = path.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return None;
     }
+
+    Some(trimmed.replace('/', "\\"))
 }
 
 /// 从窗口获取浏览器 URL (Windows)
@@ -873,6 +906,7 @@ pub fn get_active_window() -> Result<ActiveWindow> {
             app_name,
             window_title,
             browser_url,
+            executable_path: None,
         })
     } else {
         Err(AppError::Screenshot("获取活动窗口失败".to_string()))
@@ -1181,6 +1215,7 @@ pub fn get_active_window() -> Result<ActiveWindow> {
         app_name: "Unknown".to_string(),
         window_title: "Unknown".to_string(),
         browser_url: None,
+        executable_path: None,
     })
 }
 
@@ -1375,6 +1410,7 @@ pub fn get_overlay_windows(frontmost_app: &str) -> Vec<ActiveWindow> {
                 app_name: owner_name,
                 window_title,
                 browser_url: None,
+                executable_path: None,
             });
         }
 
@@ -1472,6 +1508,7 @@ pub fn get_visible_windows() -> Result<Vec<ActiveWindow>> {
                     app_name,
                     window_title,
                     browser_url,
+                    executable_path: None,
                 }
             })
             .collect();

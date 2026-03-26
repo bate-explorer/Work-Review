@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.22] - 2026-03-26
+
+### 修复
+- 修复 Windows 下时间线、概览和网站访问中的应用图标容易错位、混用或缺失的问题，图标读取现优先绑定真实可执行路径。
+- 修复 macOS 状态栏与 Dock 图标切换时的显示不稳定问题，补充独立状态栏模板图标和 Dock 图标刷新逻辑。
+
+### 优化
+- 优化 Windows 图标缓存键与应用聚合逻辑，减少同名不同路径应用被错误复用图标的情况。
+- 优化图标构建脚本与关于页文案细节，减少发布资源分叉和界面换行问题。
+
 ## [1.0.21] - 2026-03-25
 
 ### 修复
