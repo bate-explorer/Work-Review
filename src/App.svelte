@@ -23,6 +23,13 @@
   const currentWindowLabel = appWindow.label;
   const isAvatarWindow = currentWindowLabel === 'avatar';
 
+  // 視窗拖拽（Linux WebKitGTK 不支援 -webkit-app-region: drag，改用 Tauri API）
+  async function startDrag(e) {
+    // 只處理左鍵，且排除按鈕點擊
+    if (e.button !== 0 || e.target.closest('button')) return;
+    await appWindow.startDragging();
+  }
+
   // 窗口控制函数
   async function closeWindow() {
     await appWindow.hide();
@@ -362,7 +369,8 @@
     2. 负责处理窗口拖动 (-webkit-app-region: drag)
     3. 按钮区域排除拖动 (-webkit-app-region: no-drag)
   -->
-  <div class="absolute top-0 left-0 w-full h-7 z-50" style="-webkit-app-region: drag;">
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="absolute top-0 left-0 w-full h-7 z-50 cursor-default" style="-webkit-app-region: drag;" on:mousedown={startDrag}>
     <!-- 仅 Windows/Linux 平台显示自定义窗口控制按钮，macOS 使用原生控件 -->
     {#if platform && platform !== 'macos'}
     <!-- Windows 风格窗口控制按钮 (右上角) -->

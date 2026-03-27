@@ -152,9 +152,28 @@ fn get_idle_seconds() -> u64 {
     }
 }
 
+// ============== Linux 实现 ==============
+
+#[cfg(target_os = "linux")]
+fn get_idle_seconds() -> u64 {
+    // 使用 xprintidle 获取空闲毫秒数
+    use std::process::Command;
+
+    let output = Command::new("xprintidle").output();
+
+    match output {
+        Ok(result) if result.status.success() => {
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let idle_ms: u64 = stdout.trim().parse().unwrap_or(0);
+            idle_ms / 1000
+        }
+        _ => 0,
+    }
+}
+
 // ============== 其他平台 ==============
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 fn get_idle_seconds() -> u64 {
     0
 }
