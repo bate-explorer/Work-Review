@@ -2343,6 +2343,7 @@ pub fn get_active_window() -> Result<ActiveWindow> {
         window_title,
         browser_url,
         executable_path,
+        window_bounds: None,
     })
 }
 
@@ -2407,7 +2408,7 @@ pub fn get_overlay_windows(frontmost_app: &str) -> Vec<ActiveWindow> {
     const SYSTEM_PROCESSES: &[&str] = &[
         "Window Server",
         "Dock",
-        "进程坞",
+        "程序坞",
         "SystemUIServer",
         "Control Center",
         "控制中心",
