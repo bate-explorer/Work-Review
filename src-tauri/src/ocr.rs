@@ -42,6 +42,9 @@ pub enum OcrEngine {
     /// Windows OCR (通过 PowerShell)
     #[cfg(target_os = "windows")]
     WindowsOCR,
+    /// Tesseract OCR (Linux)
+    #[cfg(target_os = "linux")]
+    Tesseract,
 }
 
 /// OCR 服务
@@ -69,7 +72,10 @@ impl OcrService {
         #[cfg(target_os = "macos")]
         let preferred_engine = OcrEngine::MacOSVision;
 
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        #[cfg(target_os = "linux")]
+        let preferred_engine = OcrEngine::Tesseract;
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         let preferred_engine = OcrEngine::PaddleOCR;
 
         Self {
@@ -276,6 +282,8 @@ if __name__ == "__main__":
             OcrEngine::MacOSVision => self.extract_with_vision(image_path),
             #[cfg(target_os = "windows")]
             OcrEngine::WindowsOCR => self.extract_with_windows_ocr(image_path),
+            #[cfg(target_os = "linux")]
+            OcrEngine::Tesseract => self.extract_with_tesseract(image_path),
         }
     }
 
@@ -702,6 +710,46 @@ return outputText
             Err(e) => {
                 log::warn!("Vision OCR 执行错误: {e}");
                 Ok(None)
+            }
+        }
+    }
+
+    /// 使用 Tesseract OCR 提取文字 (Linux)
+    #[cfg(target_os = "linux")]
+    fn extract_with_tesseract(&self, image_path: &Path) -> Result<Option<OcrResult>> {
+        // 使用 tesseract 命令行工具，支持中英文混合辨识
+        let output = Self::run_command_with_timeout(
+            Command::new("tesseract")
+                .arg(image_path)
+                .arg("stdout")
+                .args(["-l", "chi_tra+chi_sim+eng"])
+                .args(["--psm", "3"]),
+            "Tesseract OCR",
+        );
+
+        match output {
+            Ok(result) if result.status.success() => {
+                let text = String::from_utf8_lossy(&result.stdout).trim().to_string();
+                if text.is_empty() {
+                    Ok(None)
+                } else {
+                    log::debug!("Tesseract OCR 识别到 {} 个字符", text.len());
+                    Ok(Some(OcrResult {
+                        text,
+                        confidence: 0.85,
+                        boxes: vec![],
+                    }))
+                }
+            }
+            Ok(result) => {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                log::warn!("Tesseract OCR 执行失败: {stderr}");
+                // 降级到 PaddleOCR
+                self.extract_with_paddle(image_path)
+            }
+            Err(e) => {
+                log::warn!("Tesseract OCR 启动失败: {e}，尝试 PaddleOCR");
+                self.extract_with_paddle(image_path)
             }
         }
     }

@@ -169,8 +169,58 @@ impl ScreenLockMonitor {
         }
     }
 
+    /// 检查屏幕是否锁定 (Linux)
+    /// 通过 D-Bus 查询 screensaver 状态或检查锁屏进程
+    #[cfg(target_os = "linux")]
+    pub fn is_locked(&self) -> bool {
+        use std::process::Command;
+
+        // 方法1: 通过 loginctl 检查 session 是否 locked
+        if let Ok(output) = Command::new("loginctl")
+            .args(["show-session", "auto", "--property=LockedHint", "--no-legend"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("LockedHint=yes") {
+                log::debug!("锁屏检测: loginctl 报告 session 已锁定");
+                return true;
+            }
+        }
+
+        // 方法2: 检查常见锁屏进程
+        for proc_name in &["cinnamon-screensaver", "gnome-screensaver", "xscreensaver", "i3lock", "swaylock"] {
+            if let Ok(output) = Command::new("pgrep").args(["-x", proc_name]).output() {
+                if output.status.success() {
+                    log::debug!("锁屏检测: 锁屏进程 {} 运行中", proc_name);
+                    return true;
+                }
+            }
+        }
+
+        // 方法3: D-Bus 查询 Cinnamon/GNOME screensaver
+        if let Ok(output) = Command::new("dbus-send")
+            .args([
+                "--session",
+                "--dest=org.cinnamon.ScreenSaver",
+                "--type=method_call",
+                "--print-reply",
+                "/org/cinnamon/ScreenSaver",
+                "org.cinnamon.ScreenSaver.GetActive",
+            ])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("boolean true") {
+                log::debug!("锁屏检测: Cinnamon ScreenSaver 报告已激活");
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// 检查屏幕是否锁定 (其他平台)
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     pub fn is_locked(&self) -> bool {
         false
     }

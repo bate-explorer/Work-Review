@@ -11,7 +11,9 @@
     "targets": [
       "nsis",
       "dmg",
-      "app"
+      "app",
+      "deb",
+      "appimage"
     ],
     "windows": {
       "certificateThumbprint": null,
@@ -44,7 +46,17 @@
     },
     "linux": {
       "deb": {
-        "depends": []
+        "depends": [
+          "xdotool",
+          "xprintidle",
+          "x11-utils",
+          "tesseract-ocr",
+          "scrot | maim | imagemagick",
+          "procps"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
       }
     }
   },

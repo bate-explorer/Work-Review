@@ -1,4 +1,4 @@
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use crate::error::AppError;
 use crate::error::Result;
 use once_cell::sync::Lazy;
@@ -10,15 +10,15 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 use winapi::shared::windef::RECT;
 use std::path::{Path, PathBuf};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::process::{Command, Output, Stdio};
 use std::sync::Mutex;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::thread;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::time::{Duration, Instant};
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const MONITOR_COMMAND_TIMEOUT: Duration = Duration::from_millis(1200);
 
 static URL_LIKE_RE: Lazy<Regex> = Lazy::new(|| {
@@ -53,7 +53,7 @@ fn log_browser_url_once(log_key: &str, message: &str, url: &str) {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn run_monitor_command_with_timeout(command: &mut Command, context: &str) -> Result<Output> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -136,6 +136,17 @@ pub fn is_system_process(app_name: &str) -> bool {
             | "loginwindow"
             | "screensaverengine"
             | "screensaver"
+            // Linux 桌面 / 锁屏 / 系统进程
+            | "cinnamon-session"
+            | "cinnamon-screensaver"
+            | "gnome-shell"
+            | "gnome-screensaver"
+            | "plasmashell"
+            | "kscreenlocker"
+            | "xscreensaver"
+            | "i3lock"
+            | "swaylock"
+            | "xfce4-session"
     )
 }
 
@@ -210,6 +221,22 @@ pub fn normalize_display_app_name(app_name: &str) -> String {
         "windowsterminal" | "windows terminal" => "Windows Terminal".to_string(),
         "powershell" | "pwsh" => "PowerShell".to_string(),
         "cmd" => "Command Prompt".to_string(),
+        // Linux 常见应用
+        "gnome-terminal" | "gnome-terminal-server" => "GNOME Terminal".to_string(),
+        "xfce4-terminal" => "Xfce Terminal".to_string(),
+        "konsole" => "Konsole".to_string(),
+        "tilix" => "Tilix".to_string(),
+        "terminator" => "Terminator".to_string(),
+        "nemo" => "Nemo".to_string(),
+        "nautilus" | "org.gnome.nautilus" => "Files".to_string(),
+        "thunar" => "Thunar".to_string(),
+        "dolphin" => "Dolphin".to_string(),
+        "evince" | "org.gnome.evince" => "Evince".to_string(),
+        "eog" | "org.gnome.eog" => "Eye of GNOME".to_string(),
+        "gedit" | "org.gnome.gedit" => "gedit".to_string(),
+        "libreoffice" => "LibreOffice".to_string(),
+        "thunderbird" | "thunderbird-bin" => "Thunderbird".to_string(),
+        "antigravity" | "windsurf" => "Antigravity".to_string(),
         _ => trimmed.to_string(),
     }
 }
@@ -2232,8 +2259,120 @@ fn get_browser_url(app_name: &str, window_title: &str) -> Option<String> {
     }
 }
 
-/// 获取当前活动窗口信息 (Linux 或其他平台的后备实现)
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+/// 获取当前活动窗口信息 (Linux X11，使用 xdotool + xprop)
+#[cfg(target_os = "linux")]
+pub fn get_active_window() -> Result<ActiveWindow> {
+    // 使用 xdotool 获取当前活动窗口 ID
+    let wid_output = run_monitor_command_with_timeout(
+        Command::new("xdotool").arg("getactivewindow"),
+        "xdotool getactivewindow",
+    )?;
+
+    let wid_str = String::from_utf8_lossy(&wid_output.stdout).trim().to_string();
+    if wid_str.is_empty() {
+        return Err(AppError::Unknown("没有活动窗口".to_string()));
+    }
+
+    // 获取窗口标题
+    let title_output = run_monitor_command_with_timeout(
+        Command::new("xdotool").args(["getwindowname", &wid_str]),
+        "xdotool getwindowname",
+    )?;
+    let window_title = String::from_utf8_lossy(&title_output.stdout).trim().to_string();
+
+    // 获取窗口 PID
+    let pid_output = run_monitor_command_with_timeout(
+        Command::new("xdotool").args(["getwindowpid", &wid_str]),
+        "xdotool getwindowpid",
+    )?;
+    let pid_str = String::from_utf8_lossy(&pid_output.stdout).trim().to_string();
+
+    // 通过 PID 获取进程名和可执行路径
+    let (app_name, executable_path) = if let Ok(pid) = pid_str.parse::<u32>() {
+        let exe_path = std::fs::read_link(format!("/proc/{}/exe", pid))
+            .ok()
+            .map(|p| p.to_string_lossy().to_string());
+
+        let comm = std::fs::read_to_string(format!("/proc/{}/comm", pid))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        let name = if !comm.is_empty() {
+            comm
+        } else if let Some(ref ep) = exe_path {
+            std::path::Path::new(ep)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Unknown".to_string())
+        } else {
+            "Unknown".to_string()
+        };
+
+        (name, exe_path)
+    } else {
+        // PID 解析失败，尝试从 xprop 获取 WM_CLASS
+        let class_output = run_monitor_command_with_timeout(
+            Command::new("xprop")
+                .args(["-id", &wid_str, "WM_CLASS"]),
+            "xprop WM_CLASS",
+        );
+        let app_name = if let Ok(output) = class_output {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // WM_CLASS 格式: WM_CLASS(STRING) = "instance", "class"
+            // 取第二个值（class name）作为应用名
+            parse_wm_class(&stdout).unwrap_or_else(|| "Unknown".to_string())
+        } else {
+            "Unknown".to_string()
+        };
+        (app_name, None)
+    };
+
+    // 尝试获取浏览器 URL（从窗口标题推断）
+    let browser_url = if is_browser_app(&app_name) {
+        extract_url_from_title(&window_title)
+            .or_else(|| get_browser_url_from_xprop(&wid_str))
+    } else {
+        None
+    };
+
+    let display_name = normalize_display_app_name(&app_name);
+
+    Ok(ActiveWindow {
+        app_name: display_name,
+        window_title,
+        browser_url,
+        executable_path,
+    })
+}
+
+/// 从 WM_CLASS 属性解析应用名称
+#[cfg(target_os = "linux")]
+fn parse_wm_class(xprop_output: &str) -> Option<String> {
+    // 格式: WM_CLASS(STRING) = "instance", "class"
+    let parts: Vec<&str> = xprop_output.split('"').collect();
+    if parts.len() >= 4 {
+        // 取 class name（第二个引号值）
+        Some(parts[3].to_string())
+    } else if parts.len() >= 2 {
+        Some(parts[1].to_string())
+    } else {
+        None
+    }
+}
+
+/// 尝试从 xprop _NET_WM_PID + /proc 读取浏览器 URL
+/// 实际上浏览器 URL 在 X11 下无法直接从窗口属性取得，
+/// 这里仅尝试从窗口标题中提取 URL 类字符串
+#[cfg(target_os = "linux")]
+fn get_browser_url_from_xprop(_wid: &str) -> Option<String> {
+    // X11 下无直接方式取得浏览器 URL，
+    // 大多数浏览器会在标题中显示部分 URL 或页面名称
+    None
+}
+
+/// 其他平台的后备实现
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub fn get_active_window() -> Result<ActiveWindow> {
     get_active_window_fast()
 }
@@ -2268,7 +2407,7 @@ pub fn get_overlay_windows(frontmost_app: &str) -> Vec<ActiveWindow> {
     const SYSTEM_PROCESSES: &[&str] = &[
         "Window Server",
         "Dock",
-        "程序坞",
+        "进程坞",
         "SystemUIServer",
         "Control Center",
         "控制中心",

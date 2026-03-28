@@ -683,7 +683,110 @@ impl ScreenshotService {
         })
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    /// 执行截屏（Linux X11，使用 scrot 或 import）
+    #[cfg(target_os = "linux")]
+    fn capture_impl(&self) -> Result<ScreenshotResult> {
+        use std::process::Command;
+
+        let now = chrono::Local::now();
+        let date_str = now.format("%Y-%m-%d").to_string();
+        let time_str = now.format("%H%M%S_%3f").to_string();
+
+        let screenshots_dir = self.data_dir.join("screenshots").join(&date_str);
+        std::fs::create_dir_all(&screenshots_dir)?;
+
+        let temp_png = screenshots_dir.join(format!("{time_str}_temp.png"));
+        let final_jpg = screenshots_dir.join(format!("{time_str}.jpg"));
+
+        // 尝试使用 scrot（常见 X11 截屏工具）
+        let scrot_result = Command::new("scrot")
+            .args(["-o", &temp_png.to_string_lossy()])
+            .output();
+
+        let captured = match scrot_result {
+            Ok(output) if output.status.success() && temp_png.exists() => true,
+            _ => {
+                // 降级：使用 ImageMagick import
+                let import_result = Command::new("import")
+                    .args(["-window", "root", &temp_png.to_string_lossy().to_string()])
+                    .output();
+
+                match import_result {
+                    Ok(output) if output.status.success() && temp_png.exists() => true,
+                    _ => {
+                        // 再降级：使用 maim
+                        let maim_result = Command::new("maim")
+                            .arg(&temp_png.to_string_lossy().to_string())
+                            .output();
+
+                        match maim_result {
+                            Ok(output) if output.status.success() && temp_png.exists() => true,
+                            _ => false,
+                        }
+                    }
+                }
+            }
+        };
+
+        if !captured {
+            return Err(AppError::Screenshot(
+                "截屏失败：请安装 scrot、maim 或 ImageMagick (import)".to_string(),
+            ));
+        }
+
+        // 读取并处理截屏
+        let img = image::open(&temp_png)
+            .map_err(|e| AppError::Screenshot(format!("读取截屏失败: {e}")))?;
+
+        let orig_width = img.width();
+        let orig_height = img.height();
+
+        let mut dynamic_image = img;
+        if orig_width > self.config.max_width {
+            let scale = self.config.max_width as f32 / orig_width as f32;
+            let new_height = (orig_height as f32 * scale) as u32;
+            dynamic_image =
+                dynamic_image.resize(self.config.max_width, new_height, FilterType::Lanczos3);
+        }
+
+        let final_width = dynamic_image.width();
+        let final_height = dynamic_image.height();
+
+        let rgb_image = dynamic_image.to_rgb8();
+        let mut output_file = std::fs::File::create(&final_jpg)?;
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut output_file,
+            self.config.jpeg_quality,
+        );
+        encoder.encode(
+            rgb_image.as_raw(),
+            final_width,
+            final_height,
+            ColorType::Rgb8.into(),
+        )?;
+
+        // 删除临时 PNG
+        let _ = std::fs::remove_file(&temp_png);
+
+        let timestamp = now.timestamp();
+        let file_size = std::fs::metadata(&final_jpg).map(|m| m.len()).unwrap_or(0);
+        log::info!(
+            "截屏保存到: {:?} ({}x{}, {} KB)",
+            final_jpg,
+            final_width,
+            final_height,
+            file_size / 1024
+        );
+
+        Ok(ScreenshotResult {
+            path: final_jpg,
+            timestamp,
+            width: final_width,
+            height: final_height,
+        })
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     fn capture_impl(&self) -> Result<ScreenshotResult> {
         Err(AppError::Screenshot("当前平台不支持截屏".to_string()))
     }
