@@ -48,3 +48,4 @@ venv/
 plan-*.md
 TEST_REPORT_*.md
 src-tauri/icons.backup/
+.worktrees/
