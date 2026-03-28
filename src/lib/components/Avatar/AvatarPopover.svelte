@@ -5,14 +5,14 @@
   $: toneClasses =
     bubble?.tone === 'success'
       ? 'border-emerald-200/80 bg-emerald-50/92 text-emerald-900'
-      : 'border-white/90 bg-slate-900/84 text-slate-50';
+      : 'border-slate-200/90 bg-slate-100/78 text-red-500';
 </script>
 
 {#if bubble}
   <div class="pointer-events-none absolute top-0 z-20" style="right: 4%; top: 2%;">
     <div class="flex flex-col items-end">
       <div
-        class="rounded-[18px] border text-center shadow-[0_16px_30px_rgba(15,23,42,0.24)] backdrop-blur-xl {toneClasses}"
+        class="rounded-[18px] border text-center shadow-[0_12px_24px_rgba(15,23,42,0.12)] backdrop-blur-xl {toneClasses}"
         style="min-width: clamp(22px, 14vw, 30px); padding: clamp(6px, 4vw, 9px) clamp(6px, 3.2vw, 8px);"
       >
         <div
