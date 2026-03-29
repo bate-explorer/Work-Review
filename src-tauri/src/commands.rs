@@ -2495,15 +2495,26 @@ pub async fn get_saved_report(
 pub async fn export_report_markdown(
     date: String,
     content: Option<String>,
+    export_dir: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<String, AppError> {
     let (export_dir, saved_content) = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-        let export_dir = state
+        let requested_export_dir = export_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+            .map(|dir| dir.to_string());
+        let configured_export_dir = state
             .config
             .daily_report_export_dir
-            .clone()
-            .ok_or_else(|| AppError::Config("请先在设置中配置日报 Markdown 导出目录".to_string()))?;
+            .as_deref()
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+            .map(|dir| dir.to_string());
+        let export_dir = requested_export_dir.or(configured_export_dir).ok_or_else(|| {
+            AppError::Config("请先选择导出目录，或在设置中配置日报 Markdown 导出目录".to_string())
+        })?;
         let saved_content = if let Some(content) = content {
             content
         } else {

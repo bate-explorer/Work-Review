@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { open } from '@tauri-apps/plugin-shell';
   import { marked } from 'marked';
   import { showToast } from '../../lib/stores/toast.js';
@@ -185,9 +186,24 @@
 
     exportInProgress = true;
     try {
+      let exportDir = config?.daily_report_export_dir || null;
+      if (!exportDir) {
+        const selected = await openDialog({
+          directory: true,
+          multiple: false,
+        });
+
+        if (!selected || Array.isArray(selected)) {
+          return;
+        }
+
+        exportDir = selected;
+      }
+
       const exportPath = await invoke('export_report_markdown', {
         date: report.date || selectedDate,
         content: report.content,
+        exportDir,
       });
       showToast(`日报已导出到 ${exportPath}`, 'success');
     } catch (e) {
@@ -305,8 +321,8 @@
           <button
             class="page-action-secondary min-h-10 px-4 py-2"
             on:click={exportReportMarkdown}
-            disabled={exportInProgress || !config?.daily_report_export_dir}
-            title={config?.daily_report_export_dir ? '' : '请先在设置中配置日报 Markdown 导出目录'}
+            disabled={exportInProgress}
+            title={config?.daily_report_export_dir ? '' : '未设置默认目录时，点击后会先让你选择导出位置'}
           >
             {#if exportInProgress}
               <div class="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent"></div>
