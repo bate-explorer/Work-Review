@@ -1,6 +1,7 @@
 use crate::analysis::{
-    append_custom_prompt, format_duration, generate_hourly_activity_summary, Analyzer,
-    GeneratedReport,
+    append_custom_prompt_for_locale, format_duration_for_locale,
+    generate_hourly_activity_summary_for_locale, translate_category_name,
+    translate_semantic_category_name, Analyzer, AppLocale, GeneratedReport,
 };
 use crate::database::{Activity, DailyStats};
 use crate::error::{AppError, Result};
@@ -11,13 +12,29 @@ use serde_json::json;
 use std::path::Path;
 use std::time::Duration;
 
-fn format_domain_label(domain: &crate::database::DomainUsage) -> String {
+fn format_domain_label(domain: &crate::database::DomainUsage, locale: AppLocale) -> String {
     match domain.semantic_category.as_deref().map(str::trim) {
         Some(semantic_category) if !semantic_category.is_empty() => {
-            format!("{}（{}）", domain.domain, semantic_category)
-        }
+            let semantic_category = translate_semantic_category_name(semantic_category, locale);
+            match locale {
+                AppLocale::En => format!("{} ({})", domain.domain, semantic_category),
+                _ => format!("{}（{}）", domain.domain, semantic_category),
+            }
+        },
         _ => domain.domain.clone(),
     }
+}
+
+fn empty_value(locale: AppLocale) -> &'static str {
+    match locale {
+        AppLocale::ZhCn => "无",
+        AppLocale::ZhTw => "無",
+        AppLocale::En => "None",
+    }
+}
+
+fn join_list(locale: AppLocale, items: Vec<String>) -> String {
+    items.join(if locale == AppLocale::En { ", " } else { "、" })
 }
 
 /// 本地多模态分析器
@@ -26,14 +43,14 @@ pub struct LocalAnalyzer {
     host: String,
     model: String,
     custom_prompt: String,
+    locale: AppLocale,
     client: Client,
 }
 
 impl LocalAnalyzer {
-    pub fn new(host: &str, model: &str, custom_prompt: &str) -> Self {
-        // 创建带超时配置的 HTTP 客户端
+    pub fn new(host: &str, model: &str, custom_prompt: &str, locale: AppLocale) -> Self {
         let client = Client::builder()
-            .timeout(Duration::from_secs(120)) // Ollama 模型推理可能较慢，设置2分钟超时
+            .timeout(Duration::from_secs(120))
             .connect_timeout(Duration::from_secs(10))
             .build()
             .unwrap_or_else(|_| Client::new());
@@ -42,89 +59,160 @@ impl LocalAnalyzer {
             host: host.to_string(),
             model: model.to_string(),
             custom_prompt: custom_prompt.to_string(),
+            locale,
             client,
         }
     }
 
-    /// 使用 Ollama 生成日报内容
+    fn generation_prompt(&self, date: &str, stats: &DailyStats, activities: &[Activity]) -> String {
+        let apps_list = join_list(
+            self.locale,
+            stats
+                .app_usage
+                .iter()
+                .take(5)
+                .map(|app| {
+                    format!(
+                        "{}: {}",
+                        app.app_name,
+                        format_duration_for_locale(app.duration, self.locale)
+                    )
+                })
+                .collect(),
+        );
+
+        let urls_list = join_list(
+            self.locale,
+            stats
+                .domain_usage
+                .iter()
+                .take(3)
+                .map(|domain| format_domain_label(domain, self.locale))
+                .collect(),
+        );
+
+        let keywords = activities
+            .iter()
+            .filter_map(|activity| activity.ocr_text.as_ref())
+            .flat_map(|text| {
+                text.split(|c: char| !c.is_alphanumeric() && c != '-')
+                    .filter(|word| word.len() > 3)
+                    .take(3)
+                    .map(|item| item.to_string())
+            })
+            .take(20)
+            .collect::<Vec<_>>();
+
+        let base_prompt = match self.locale {
+            AppLocale::ZhCn => format!(
+                r#"你是一位风趣但可靠的工作效率分析师。请根据以下工作数据，生成一份自然、具体、有帮助的日报补充分析。
+
+## 今日数据
+- 日期：{date}
+- 总工作时长：{}
+- 使用的应用：{}
+- 访问的网站：{}
+- 从屏幕内容提取的关键词：{}
+
+## 要求
+请用简洁自然的中文输出以下三个部分：
+
+## 今日工作内容
+根据应用、网站和关键词，概括今天主要在推进什么工作，2 到 4 句话。
+
+## 专注度分析
+结合时长分布和应用切换，判断今天的专注状态，给出简短评价。
+
+## 明日建议
+给 1 条具体可执行的改进建议。
+
+不要输出额外前言或解释。"#,
+                format_duration_for_locale(stats.total_duration, self.locale),
+                if apps_list.is_empty() { empty_value(self.locale).to_string() } else { apps_list },
+                if urls_list.is_empty() { empty_value(self.locale).to_string() } else { urls_list },
+                if keywords.is_empty() {
+                    empty_value(self.locale).to_string()
+                } else {
+                    join_list(self.locale, keywords)
+                }
+            ),
+            AppLocale::ZhTw => format!(
+                r#"你是一位可靠又自然的工作效率分析師。請根據以下工作資料，生成一份具體、有幫助的日報補充分析。
+
+## 今日資料
+- 日期：{date}
+- 總工作時長：{}
+- 使用的應用：{}
+- 造訪的網站：{}
+- 從畫面內容提取的關鍵詞：{}
+
+## 要求
+請用繁體中文輸出以下三個部分：
+
+## 今日工作內容
+根據應用、網站與關鍵詞，概括今天主要在推進什麼工作，2 到 4 句話。
+
+## 專注度分析
+結合時長分布與應用切換，判斷今天的專注狀態，給出簡短評價。
+
+## 明日建議
+給 1 條具體可執行的改進建議。
+
+不要輸出額外前言或解釋。"#,
+                format_duration_for_locale(stats.total_duration, self.locale),
+                if apps_list.is_empty() { empty_value(self.locale).to_string() } else { apps_list },
+                if urls_list.is_empty() { empty_value(self.locale).to_string() } else { urls_list },
+                if keywords.is_empty() {
+                    empty_value(self.locale).to_string()
+                } else {
+                    join_list(self.locale, keywords)
+                }
+            ),
+            AppLocale::En => format!(
+                r#"You are a concise and reliable work-review assistant. Based on the data below, write a practical daily work analysis.
+
+## Daily data
+- Date: {date}
+- Total work duration: {}
+- Apps used: {}
+- Websites visited: {}
+- Keywords extracted from screen content: {}
+
+## Requirements
+Write in English and output exactly these three sections:
+
+## Today's work
+Summarize what the user mainly worked on today in 2 to 4 sentences.
+
+## Focus assessment
+Comment briefly on focus and time allocation based on app usage and switching patterns.
+
+## Next-step suggestion
+Give 1 concrete and practical suggestion for tomorrow.
+
+Do not add any extra preface or explanation."#,
+                format_duration_for_locale(stats.total_duration, self.locale),
+                if apps_list.is_empty() { empty_value(self.locale).to_string() } else { apps_list },
+                if urls_list.is_empty() { empty_value(self.locale).to_string() } else { urls_list },
+                if keywords.is_empty() {
+                    empty_value(self.locale).to_string()
+                } else {
+                    join_list(self.locale, keywords)
+                }
+            ),
+        };
+
+        append_custom_prompt_for_locale(base_prompt, &self.custom_prompt, self.locale)
+    }
+
     async fn generate_with_ollama(
         &self,
         date: &str,
         stats: &DailyStats,
         activities: &[Activity],
     ) -> Result<String> {
-        // 构建提示词
-        let apps_list = stats
-            .app_usage
-            .iter()
-            .take(5)
-            .map(|a| format!("{}: {}", a.app_name, format_duration(a.duration)))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let prompt = self.generation_prompt(date, stats, activities);
 
-        let urls_list = stats
-            .domain_usage
-            .iter()
-            .take(3)
-            .map(format_domain_label)
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        // 提取关键词
-        let keywords: Vec<String> = activities
-            .iter()
-            .filter_map(|a| a.ocr_text.as_ref())
-            .flat_map(|text| {
-                text.split(|c: char| !c.is_alphanumeric() && c != '-')
-                    .filter(|w| w.len() > 3)
-                    .take(3)
-                    .map(|s| s.to_string())
-            })
-            .take(20)
-            .collect();
-
-        let prompt = append_custom_prompt(
-            format!(
-                r#"你是一位风趣幽默的工作效率分析师。请根据以下打工人今日的工作数据，生成一份有温度的工作分析。
-
-## 今日数据
-- 日期：{} 
-- 总工作时长：{} 
-- 使用的应用：{}
-- 访问的网站：{}
-- 从屏幕内容提取的关键词：{}
-
-## 要求
-请用轻松友好的语气，生成以下内容（必须包含这三个部分）：
-
-## 🎯 今日工作内容
-（根据应用、网站和关键词，推断用户今天主要做了什么工作，2-4 句话）
-
-## 📊 专注度分析
-（分析用户的工作专注度，是否频繁切换应用，给出一个简短评价）
-
-## 💡 明日建议
-（给一条接地气的效率改进建议，可以带点幽默）
-
-注意：直接输出内容，不要有任何额外说明。"#,
-                date,
-                format_duration(stats.total_duration),
-                apps_list,
-                if urls_list.is_empty() {
-                    "无".to_string()
-                } else {
-                    urls_list
-                },
-                if keywords.is_empty() {
-                    "无".to_string()
-                } else {
-                    keywords.join("、")
-                }
-            ),
-            &self.custom_prompt,
-        );
-
-        // 调用 Ollama API
         let response = self
             .client
             .post(format!("{}/api/generate", self.host))
@@ -133,8 +221,8 @@ impl LocalAnalyzer {
                 "prompt": prompt,
                 "stream": false,
                 "options": {
-                    "temperature": 0.2,  // 降低 temperature 提高输出稳定性
-                    "seed": 42  // 使用固定种子提高一致性
+                    "temperature": 0.2,
+                    "seed": 42
                 }
             }))
             .send()
@@ -148,7 +236,7 @@ impl LocalAnalyzer {
         }
 
         let result: serde_json::Value = response.json().await?;
-        let ai_content = result["response"].as_str().unwrap_or("").to_string();
+        let ai_content = result["response"].as_str().unwrap_or("").trim().to_string();
 
         if ai_content.is_empty() {
             return Err(AppError::Analysis("Ollama 返回空内容".to_string()));
@@ -157,19 +245,23 @@ impl LocalAnalyzer {
         Ok(ai_content)
     }
 
-    /// 分析单张截图（保留供视觉模式使用）
     #[allow(dead_code)]
     async fn analyze_screenshot(&self, screenshot_path: &Path) -> Result<String> {
-        // 读取截图并转换为 Base64
         let image_data = tokio::fs::read(screenshot_path).await?;
         let image_base64 = BASE64_STANDARD.encode(&image_data);
 
-        // 调用 Ollama API
-        let response = self.client
+        let screenshot_prompt = match self.locale {
+            AppLocale::ZhCn => "请简要描述这张截图里的工作内容，用中文回答，限制在 50 字以内。",
+            AppLocale::ZhTw => "請簡要描述這張截圖裡的工作內容，請用繁體中文回答，限制在 50 字內。",
+            AppLocale::En => "Briefly describe what work is shown in this screenshot in under 50 words.",
+        };
+
+        let response = self
+            .client
             .post(format!("{}/api/generate", self.host))
             .json(&json!({
                 "model": self.model,
-                "prompt": "请简要描述这张截图中的内容，用户正在做什么工作？请用中文回答，限制在50字以内。",
+                "prompt": screenshot_prompt,
                 "images": [image_base64],
                 "stream": false,
             }))
@@ -184,12 +276,7 @@ impl LocalAnalyzer {
         }
 
         let result: serde_json::Value = response.json().await?;
-        let insight = result["response"]
-            .as_str()
-            .unwrap_or("无法分析")
-            .to_string();
-
-        Ok(insight)
+        Ok(result["response"].as_str().unwrap_or("").to_string())
     }
 }
 
@@ -201,24 +288,49 @@ impl Analyzer for LocalAnalyzer {
         stats: &DailyStats,
         activities: &[Activity],
         _screenshots_dir: &Path,
+        locale: AppLocale,
     ) -> Result<GeneratedReport> {
         log::info!("生成本地日报（尝试调用 Ollama）");
 
-        // 首先生成固定的统计部分
-        let mut report = format!("# 工作日报 - {date}\n\n");
+        let mut report = match locale {
+            AppLocale::ZhCn => format!("# 工作日报 - {date}\n\n"),
+            AppLocale::ZhTw => format!("# 工作日報 - {date}\n\n"),
+            AppLocale::En => format!("# Daily Report - {date}\n\n"),
+        };
         let mut used_ai = false;
 
-        // 固定模板部分：数据统计
-        report.push_str("## 一、今日概览\n\n");
-        report.push_str(&format!(
-            "- **总工作时长**: {}\n",
-            format_duration(stats.total_duration)
-        ));
-        report.push_str(&format!("- **截图数量**: {} 张\n", stats.screenshot_count));
-        report.push_str(&format!("- **使用应用**: {} 个\n\n", stats.app_usage.len()));
+        report.push_str(match locale {
+            AppLocale::ZhCn => "## 一、今日概览\n\n",
+            AppLocale::ZhTw => "## 一、今日概覽\n\n",
+            AppLocale::En => "## 1. Overview\n\n",
+        });
+        let overview_summary = match locale {
+            AppLocale::ZhCn => format!(
+                "- **总工作时长**: {}\n- **截图数量**: {} 张\n- **使用应用**: {} 个\n\n",
+                format_duration_for_locale(stats.total_duration, locale),
+                stats.screenshot_count,
+                stats.app_usage.len()
+            ),
+            AppLocale::ZhTw => format!(
+                "- **總工作時長**: {}\n- **截圖數量**: {} 張\n- **使用應用**: {} 個\n\n",
+                format_duration_for_locale(stats.total_duration, locale),
+                stats.screenshot_count,
+                stats.app_usage.len()
+            ),
+            AppLocale::En => format!(
+                "- **Total work duration**: {}\n- **Screenshots**: {}\n- **Apps used**: {}\n\n",
+                format_duration_for_locale(stats.total_duration, locale),
+                stats.screenshot_count,
+                stats.app_usage.len()
+            ),
+        };
+        report.push_str(&overview_summary);
 
-        // 时间分配
-        report.push_str("## 二、时间分配\n\n");
+        report.push_str(match locale {
+            AppLocale::ZhCn => "## 二、时间分配\n\n",
+            AppLocale::ZhTw => "## 二、時間分配\n\n",
+            AppLocale::En => "## 2. Time allocation\n\n",
+        });
         for cat in &stats.category_usage {
             let percentage = if stats.total_duration > 0 {
                 (cat.duration as f64 / stats.total_duration as f64 * 100.0) as i32
@@ -227,72 +339,118 @@ impl Analyzer for LocalAnalyzer {
             };
             report.push_str(&format!(
                 "- **{}**: {} ({}%)\n",
-                crate::monitor::get_category_name(&cat.category),
-                format_duration(cat.duration),
+                translate_category_name(&cat.category, locale),
+                format_duration_for_locale(cat.duration, locale),
                 percentage
             ));
         }
 
-        // 应用排行
-        report.push_str("\n## 三、应用使用情况\n\n");
-        for (i, app) in stats.app_usage.iter().take(5).enumerate() {
+        report.push_str(match locale {
+            AppLocale::ZhCn => "\n## 三、应用使用情况\n\n",
+            AppLocale::ZhTw => "\n## 三、應用使用情況\n\n",
+            AppLocale::En => "\n## 3. App usage\n\n",
+        });
+        for (index, app) in stats.app_usage.iter().take(5).enumerate() {
             report.push_str(&format!(
                 "{}. **{}**: {}\n",
-                i + 1,
+                index + 1,
                 app.app_name,
-                format_duration(app.duration)
+                format_duration_for_locale(app.duration, locale)
             ));
         }
 
-        if let Some(hourly_summary) = generate_hourly_activity_summary(stats) {
-            report.push_str("\n## 四、按小时活跃度\n\n");
+        if let Some(hourly_summary) = generate_hourly_activity_summary_for_locale(stats, locale) {
+            report.push_str(match locale {
+                AppLocale::ZhCn => "\n## 四、按小时活跃度\n\n",
+                AppLocale::ZhTw => "\n## 四、按小時活躍度\n\n",
+                AppLocale::En => "\n## 4. Hourly activity\n\n",
+            });
             report.push_str(&hourly_summary);
         }
 
-        // 网站访问
         if !stats.domain_usage.is_empty() {
-            report.push_str("\n## 五、网站访问\n\n");
+            report.push_str(match locale {
+                AppLocale::ZhCn => "\n## 五、网站访问\n\n",
+                AppLocale::ZhTw => "\n## 五、網站造訪\n\n",
+                AppLocale::En => "\n## 5. Website visits\n\n",
+            });
             for domain in stats.domain_usage.iter().take(5) {
                 report.push_str(&format!(
                     "- **{}**: {}\n",
-                    format_domain_label(domain),
-                    format_duration(domain.duration)
+                    format_domain_label(domain, locale),
+                    format_duration_for_locale(domain.duration, locale)
                 ));
             }
         }
 
-        // 尝试调用 Ollama 生成 AI 扩展内容
         match self.generate_with_ollama(date, stats, activities).await {
             Ok(ai_content) => {
-                log::info!("Ollama 生成成功");
                 report.push('\n');
                 report.push_str(&ai_content);
                 used_ai = true;
             }
-            Err(e) => {
-                log::warn!("Ollama 调用失败，使用备选内容: {e}");
-                // 使用简单的备选内容
-                report.push_str("\n## 六、今日工作内容\n\n");
-                let apps_list = stats
-                    .app_usage
-                    .iter()
-                    .take(3)
-                    .map(|a| a.app_name.clone())
-                    .collect::<Vec<_>>()
-                    .join("、");
-                report.push_str(&format!(
-                    "今日主要使用 {apps_list} 等应用进行工作。持续努力中！\n"
-                ));
-
-                report.push_str("\n## 七、专注度分析\n\n");
-                report.push_str("今日工作整体表现不错，继续保持稳定的工作节奏。\n");
-
-                report.push_str("\n## 八、明日建议\n\n");
-                report.push_str(
-                    "建议定期休息，避免久坐。深度工作时可以关闭通讯软件通知，提高专注度。\n",
+            Err(error) => {
+                log::warn!("Ollama 调用失败，使用备选内容: {error}");
+                let apps_list = join_list(
+                    locale,
+                    stats
+                        .app_usage
+                        .iter()
+                        .take(3)
+                        .map(|app| app.app_name.clone())
+                        .collect(),
                 );
 
-                report.push_str("\n---\n*注：AI 分析暂不可用，使用基础模板生成。*");
+                match locale {
+                    AppLocale::ZhCn => {
+                        report.push_str("\n## 六、今日工作内容\n\n");
+                        report.push_str(&format!(
+                            "今日主要使用 {} 等应用进行工作，整体推进比较稳定。\n",
+                            if apps_list.is_empty() {
+                                "多个".to_string()
+                            } else {
+                                apps_list
+                            }
+                        ));
+                        report.push_str("\n## 七、专注度分析\n\n");
+                        report.push_str("今天整体节奏较稳定，可以继续保持当前的工作推进方式。\n");
+                        report.push_str("\n## 八、明日建议\n\n");
+                        report.push_str("建议为核心任务预留更完整的连续时间段，减少被打断的次数。\n");
+                        report.push_str("\n---\n*注：AI 分析暂不可用，使用基础模板生成。*");
+                    }
+                    AppLocale::ZhTw => {
+                        report.push_str("\n## 六、今日工作內容\n\n");
+                        report.push_str(&format!(
+                            "今日主要使用 {} 等應用進行工作，整體推進相對穩定。\n",
+                            if apps_list.is_empty() {
+                                "多個".to_string()
+                            } else {
+                                apps_list
+                            }
+                        ));
+                        report.push_str("\n## 七、專注度分析\n\n");
+                        report.push_str("今天整體節奏較穩定，可以延續目前的工作推進方式。\n");
+                        report.push_str("\n## 八、明日建議\n\n");
+                        report.push_str("建議為核心任務預留更完整的連續時間段，減少被打斷的次數。\n");
+                        report.push_str("\n---\n*註：AI 分析暫時不可用，目前使用基礎模板生成。*");
+                    }
+                    AppLocale::En => {
+                        report.push_str("\n## 6. Today's work\n\n");
+                        report.push_str(&format!(
+                            "Today mainly involved work across {} and related tools, with a fairly steady pace overall.\n",
+                            if apps_list.is_empty() {
+                                "several apps".to_string()
+                            } else {
+                                apps_list
+                            }
+                        ));
+                        report.push_str("\n## 7. Focus assessment\n\n");
+                        report.push_str("The overall rhythm looks stable today, and the workflow stayed reasonably consistent.\n");
+                        report.push_str("\n## 8. Next-step suggestion\n\n");
+                        report.push_str("Reserve a longer uninterrupted block for the main task tomorrow to reduce context switching.\n");
+                        report.push_str("\n---\n*Note: AI analysis is currently unavailable, so this report was generated from the base template.*");
+                    }
+                }
             }
         }
 

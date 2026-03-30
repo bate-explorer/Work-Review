@@ -1,38 +1,70 @@
 <script>
   import { link, location } from 'svelte-spa-router';
   import { invoke } from '@tauri-apps/api/core';
-  import { createEventDispatcher, onMount } from 'svelte';
-  import { getVersion } from '@tauri-apps/api/app';
+  import { emitTo } from '@tauri-apps/api/event';
+  import { createEventDispatcher } from 'svelte';
+  import { getLocaleShortLabel, locale, setLocale, t } from '$lib/i18n/index.js';
 
   export let isRecording = true;
-  // 动态获取版本号，唯一来源为 tauri.conf.json
-  let appVersion = '';
-  onMount(async () => {
-    try {
-      appVersion = await getVersion();
-    } catch (e) {
-      appVersion = '?.?.?';
-    }
-  });
   export let isPaused = false;
   export let theme = 'system';
   
   const dispatch = createEventDispatcher();
+  let localeMenuOpen = false;
+  let localeMenuContainer;
 
   const navItems = [
-    { path: '/', label: '概览', icon: 'home' },
-    { path: '/timeline', label: '时间线', icon: 'timeline' },
-    { path: '/report', label: '日报', icon: 'report' },
-    { path: '/ask', label: '助手', icon: 'ask' },
-    { path: '/settings', label: '设置', icon: 'settings' },
-    { path: '/about', label: '关于', icon: 'info' },
+    { path: '/', labelKey: 'sidebar.nav.overview', icon: 'home' },
+    { path: '/timeline', labelKey: 'sidebar.nav.timeline', icon: 'timeline' },
+    { path: '/report', labelKey: 'sidebar.nav.report', icon: 'report' },
+    { path: '/ask', labelKey: 'sidebar.nav.ask', icon: 'ask' },
+    { path: '/settings', labelKey: 'sidebar.nav.settings', icon: 'settings' },
+    { path: '/about', labelKey: 'sidebar.nav.about', icon: 'info' },
   ];
+
+  $: currentLocale = $locale;
+  $: translate = (key, params = {}) => {
+    currentLocale;
+    return t(key, params);
+  };
+  const localeOptions = [
+    { value: 'zh-CN', label: 'ZH', fullLabel: '简体中文' },
+    { value: 'zh-TW', label: 'TW', fullLabel: '繁體中文' },
+    { value: 'en', label: 'EN', fullLabel: 'English' },
+  ];
+  $: currentLocaleLabel = getLocaleShortLabel(currentLocale);
 
   function cycleTheme() {
     const themes = ['system', 'light', 'dark'];
     const currentIndex = themes.indexOf(theme);
     const nextTheme = themes[(currentIndex + 1) % themes.length];
     dispatch('themeChange', nextTheme);
+  }
+
+  function toggleLocaleMenu() {
+    localeMenuOpen = !localeMenuOpen;
+  }
+
+  function selectLocale(nextLocale) {
+    const normalizedLocale = setLocale(nextLocale);
+    localeMenuOpen = false;
+    emitTo('avatar', 'locale-changed', normalizedLocale).catch((error) => {
+      console.warn('同步桌宠语言失败:', error);
+    });
+  }
+
+  function handleWindowClick(event) {
+    if (!localeMenuOpen || localeMenuContainer?.contains(event.target)) {
+      return;
+    }
+
+    localeMenuOpen = false;
+  }
+
+  function handleWindowKeydown(event) {
+    if (event.key === 'Escape') {
+      localeMenuOpen = false;
+    }
   }
 
   async function toggleRecording() {
@@ -57,17 +89,21 @@
   }, {});
 </script>
 
+<svelte:window on:click={handleWindowClick} on:keydown={handleWindowKeydown} />
+
 <div class="h-full flex flex-col overflow-hidden">
   <div class="sidebar-top">
     <!-- Logo 区域 -->
     <div class="sidebar-brand">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl overflow-hidden shadow-md shrink-0 ring-1 ring-slate-200/50 dark:ring-slate-700/50">
-          <img src="/icons/256x256.png" alt="Work Review" class="w-full h-full object-cover" />
-        </div>
-        <div class="min-w-0">
-          <h1 class="sidebar-brand-title">Work Review</h1>
-          <p class="sidebar-brand-subtitle">记录 · 分析 · 证明</p>
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="w-10 h-10 rounded-xl overflow-hidden shadow-md shrink-0 ring-1 ring-slate-200/50 dark:ring-slate-700/50">
+            <img src="/icons/256x256.png" alt="Work Review" class="w-full h-full object-cover" />
+          </div>
+          <div class="min-w-0">
+            <h1 class="sidebar-brand-title">Work Review</h1>
+            <p class="sidebar-brand-subtitle">{translate('sidebar.tagline')}</p>
+          </div>
         </div>
       </div>
     </div>
@@ -85,7 +121,7 @@
             {/if}
           </span>
           <span class="text-[12px] font-semibold tracking-[0.08em] text-slate-500 dark:text-slate-400">
-            记录状态
+            {translate('sidebar.recordingStatus')}
           </span>
         </div>
         <button
@@ -95,7 +131,7 @@
               ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300' 
               : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'}"
         >
-          {#if isPaused}恢复{:else}暂停{/if}
+          {#if isPaused}{translate('sidebar.resume')}{:else}{translate('sidebar.pause')}{/if}
         </button>
       </div>
     </div>
@@ -147,7 +183,7 @@
                 {/if}
               </div>
 
-              <span class="sidebar-nav-label {activeStates[item.path] ? 'sidebar-nav-label-active' : ''}">{item.label}</span>
+              <span class="sidebar-nav-label {activeStates[item.path] ? 'sidebar-nav-label-active' : ''}">{translate(item.labelKey)}</span>
             </a>
           </li>
         {/each}
@@ -156,12 +192,48 @@
 
     <!-- 底部工具栏 -->
     <div class="sidebar-bottom">
-      <div class="sidebar-footer">
-        <span class="sidebar-footer-version">v{appVersion}</span>
+      <div class="sidebar-footer w-full justify-between gap-y-2">
+
+        <div class="relative" bind:this={localeMenuContainer}>
+          <button
+            type="button"
+            class="locale-switch inline-flex h-8 min-w-[54px] items-center justify-center gap-1.5 rounded-full border border-slate-200/80 bg-white/90 px-3 text-[11px] font-semibold tracking-[0.08em] text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)] outline-none transition hover:border-slate-300 hover:text-slate-800 focus:ring-2 focus:ring-slate-300 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:text-white dark:focus:ring-slate-600"
+            aria-label={translate('sidebar.localeButtonTitle')}
+            aria-haspopup="menu"
+            aria-expanded={localeMenuOpen}
+            title={translate('sidebar.localeButtonTitle')}
+            on:click={toggleLocaleMenu}
+          >
+            <span class="leading-none">{currentLocaleLabel}</span>
+            <svg class="h-3 w-3 shrink-0 text-slate-400 transition-transform {localeMenuOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+
+          {#if localeMenuOpen}
+            <div
+              class="absolute bottom-full left-0 mb-2 min-w-[148px] rounded-2xl border border-slate-200/80 bg-white/96 p-1.5 shadow-xl shadow-slate-900/12 backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/96"
+              role="menu"
+            >
+              {#each localeOptions as option}
+                <button
+                  type="button"
+                  class="flex w-full items-center gap-2.5 whitespace-nowrap rounded-xl px-3 py-2 text-left text-xs font-medium transition-colors {currentLocale === option.value ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-white' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800 dark:text-slate-300 dark:hover:bg-slate-800/80 dark:hover:text-white'}"
+                  role="menuitemradio"
+                  aria-checked={currentLocale === option.value}
+                  on:click={() => selectLocale(option.value)}
+                >
+                  <span class="font-semibold tracking-[0.08em] text-slate-500 dark:text-slate-400">{option.label}</span>
+                  <span class="text-slate-700 dark:text-slate-200">{option.fullLabel}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
 
         <button on:click={cycleTheme}
           class="sidebar-footer-action"
-          title="{theme === 'system' ? '自动' : theme === 'light' ? '浅色' : '深色'}模式">
+          title="{theme === 'system' ? translate('sidebar.themeTitle.system') : theme === 'light' ? translate('sidebar.themeTitle.light') : translate('sidebar.themeTitle.dark')}">
           {#if theme === 'system'}
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
           {:else if theme === 'light'}

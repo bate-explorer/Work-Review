@@ -54,10 +54,16 @@ pub struct Activity {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DailyReport {
     pub date: String,
+    #[serde(default = "default_report_locale")]
+    pub locale: String,
     pub content: String,
     pub ai_mode: String,
     pub model_name: Option<String>,
     pub created_at: i64,
+}
+
+fn default_report_locale() -> String {
+    "zh-CN".to_string()
 }
 
 /// 应用使用统计
@@ -368,6 +374,26 @@ impl Database {
                 model_name TEXT,
                 created_at INTEGER NOT NULL
             )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS daily_reports_localized (
+                date TEXT NOT NULL,
+                locale TEXT NOT NULL,
+                content TEXT NOT NULL,
+                ai_mode TEXT NOT NULL,
+                model_name TEXT,
+                created_at INTEGER NOT NULL,
+                UNIQUE(date, locale)
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "INSERT OR IGNORE INTO daily_reports_localized (date, locale, content, ai_mode, model_name, created_at)
+             SELECT date, 'zh-CN', content, ai_mode, model_name, created_at
+             FROM daily_reports",
             [],
         )?;
 
@@ -1441,10 +1467,11 @@ impl Database {
         })?;
 
         conn.execute(
-            "INSERT OR REPLACE INTO daily_reports (date, content, ai_mode, model_name, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT OR REPLACE INTO daily_reports_localized (date, locale, content, ai_mode, model_name, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 report.date,
+                report.locale,
                 report.content,
                 report.ai_mode,
                 report.model_name,
@@ -1456,21 +1483,25 @@ impl Database {
     }
 
     /// 获取每日报告
-    pub fn get_report(&self, date: &str) -> Result<Option<DailyReport>> {
+    pub fn get_report(&self, date: &str, locale: Option<&str>) -> Result<Option<DailyReport>> {
         let conn = self.conn.lock().map_err(|e| {
             AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
+        let locale = locale.unwrap_or("zh-CN");
 
         let result = conn.query_row(
-            "SELECT date, content, ai_mode, model_name, created_at FROM daily_reports WHERE date = ?1",
-            params![date],
+            "SELECT date, locale, content, ai_mode, model_name, created_at
+             FROM daily_reports_localized
+             WHERE date = ?1 AND locale = ?2",
+            params![date, locale],
             |row| {
                 Ok(DailyReport {
                     date: row.get(0)?,
-                    content: row.get(1)?,
-                    ai_mode: row.get(2)?,
-                    model_name: row.get(3)?,
-                    created_at: row.get(4)?,
+                    locale: row.get(1)?,
+                    content: row.get(2)?,
+                    ai_mode: row.get(3)?,
+                    model_name: row.get(4)?,
+                    created_at: row.get(5)?,
                 })
             },
         );
@@ -2011,7 +2042,7 @@ impl Database {
 
         let mut report_stmt = conn.prepare(
             "SELECT date, content, ai_mode, model_name, created_at
-             FROM daily_reports
+             FROM daily_reports_localized
              WHERE (?1 IS NULL OR date >= ?1)
                AND (?2 IS NULL OR date <= ?2)
              ORDER BY created_at DESC
@@ -2692,6 +2723,48 @@ mod tests {
     }
 
     #[test]
+    fn 同一天日报应支持按语言分别保存和读取() {
+        let db_path = temp_db_path("report-locale");
+        let db = Database::new(&db_path).expect("创建数据库失败");
+        let now = chrono::Local::now().timestamp();
+        let date = "2026-03-30".to_string();
+
+        db.save_report(&super::DailyReport {
+            date: date.clone(),
+            locale: "zh-CN".to_string(),
+            content: "# 工作日报\n\n中文内容".to_string(),
+            ai_mode: "summary".to_string(),
+            model_name: Some("gemma3:270m".to_string()),
+            created_at: now,
+        })
+        .expect("保存中文日报失败");
+
+        db.save_report(&super::DailyReport {
+            date: date.clone(),
+            locale: "en".to_string(),
+            content: "# Daily Report\n\nEnglish content".to_string(),
+            ai_mode: "summary".to_string(),
+            model_name: Some("gemma3:270m".to_string()),
+            created_at: now + 1,
+        })
+        .expect("保存英文日报失败");
+
+        let zh_report = db
+            .get_report(&date, Some("zh-CN"))
+            .expect("读取中文日报失败")
+            .expect("未找到中文日报");
+        let en_report = db
+            .get_report(&date, Some("en"))
+            .expect("读取英文日报失败")
+            .expect("未找到英文日报");
+
+        assert_eq!(zh_report.content, "# 工作日报\n\n中文内容");
+        assert_eq!(en_report.content, "# Daily Report\n\nEnglish content");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
     fn 数据库备份应保留活动与日报数据() {
         let source_path = temp_db_path("backup-source");
         let backup_path = temp_db_path("backup-target");
@@ -2719,6 +2792,7 @@ mod tests {
 
         db.save_report(&super::DailyReport {
             date: date.clone(),
+            locale: "zh-CN".to_string(),
             content: "# 工作日报\n\n今天主要在修 bug。".to_string(),
             ai_mode: "summary".to_string(),
             model_name: Some("gpt-4.1".to_string()),
@@ -2734,7 +2808,7 @@ mod tests {
             .expect("读取备份活动失败")
             .expect("备份后未找到活动");
         let report = restored
-            .get_report(&date)
+            .get_report(&date, Some("zh-CN"))
             .expect("读取备份日报失败")
             .expect("备份后未找到日报");
 

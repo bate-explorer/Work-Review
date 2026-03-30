@@ -6,6 +6,7 @@
   import { marked } from 'marked';
   import { showToast } from '../../lib/stores/toast.js';
   import { cache } from '../../lib/stores/cache.js';
+  import { formatLocalizedDate, formatLocalizedTime, locale, t } from '$lib/i18n/index.js';
   import { shouldShowPromptAppliedToast } from './reportPromptFeedback.js';
 
   function getLocalDateString() {
@@ -29,16 +30,18 @@
   let lastLoadedDate = '';
   let exportInProgress = false;
   let promptSaving = false;
+  $: currentLocale = $locale;
+  $: currentReportCacheKey = `${selectedDate}:${currentLocale}`;
 
   // 获取 AI 模式显示名称
   function getAiModeName(mode) {
     const normalizedMode = (mode || '').toString().trim().toLowerCase();
     const modeNames = {
-      'local': '基础模板',
-      'summary': 'AI 增强',
-      'cloud': '云端分析'
+      'local': t('report.modeNames.local'),
+      'summary': t('report.modeNames.summary'),
+      'cloud': t('report.modeNames.cloud')
     };
-    return modeNames[normalizedMode] || mode || '未知';
+    return modeNames[normalizedMode] || mode || t('report.modeNames.unknown');
   }
 
   function resolveReportMeta(reportData, currentConfig) {
@@ -50,7 +53,10 @@
 
     if (
       fallbackHint.includes('由基础模板生成') ||
-      fallbackHint.includes('使用基础模板生成')
+      fallbackHint.includes('使用基础模板生成') ||
+      fallbackHint.includes('由基礎模板生成') ||
+      fallbackHint.includes('使用基礎模板生成') ||
+      fallbackHint.toLowerCase().includes('generated from the base template')
     ) {
       aiMode = 'local';
       modelName = null;
@@ -71,28 +77,28 @@
     }
   }
 
-  async function loadReport() {
+  async function loadReport(previousReport = null) {
     // 乐观更新：先显示缓存数据
     let cacheData;
     const unsubscribe = cache.subscribe(c => { cacheData = c; });
     unsubscribe();
     
-    if (cacheData.reports[selectedDate]?.data) {
-      report = cacheData.reports[selectedDate].data;
+    if (cacheData.reports[currentReportCacheKey]?.data) {
+      report = cacheData.reports[currentReportCacheKey].data;
       isYesterdayReport = false;
       loading = false;
       
       // 缓存有效则直接返回
-      if (cache.isValid(cacheData.reports, selectedDate)) {
+      if (cache.isValid(cacheData.reports[currentReportCacheKey])) {
         return;
       }
       
       // 后台静默刷新
       try {
-        const savedReport = await invoke('get_saved_report', { date: selectedDate });
+        const savedReport = await invoke('get_saved_report', { date: selectedDate, locale: currentLocale });
         if (savedReport) {
           report = savedReport;
-          cache.setReport(selectedDate, savedReport);
+          cache.setReport(currentReportCacheKey, savedReport);
         }
       } catch (e) {
         console.warn('后台刷新日报失败:', e);
@@ -102,16 +108,29 @@
       loading = true;
       error = null;
       try {
-        const savedReport = await invoke('get_saved_report', { date: selectedDate });
+        const savedReport = await invoke('get_saved_report', { date: selectedDate, locale: currentLocale });
         if (savedReport) {
           report = savedReport;
           isYesterdayReport = false;
-          cache.setReport(selectedDate, savedReport);
+          cache.setReport(currentReportCacheKey, savedReport);
         } else {
+          if (!savedReport && previousReport?.date === selectedDate && previousReport?.content) {
+            generating = true;
+            await invoke('generate_report', { date: selectedDate, force: false, locale: currentLocale });
+            const localizedReport = await invoke('get_saved_report', { date: selectedDate, locale: currentLocale });
+
+            if (localizedReport) {
+              report = localizedReport;
+              isYesterdayReport = false;
+              cache.setReport(currentReportCacheKey, localizedReport);
+              return;
+            }
+          }
+
           // 如果选择今天且今天无日报，尝试加载昨日日报
           if (selectedDate === getLocalDateString()) {
             const yesterday = getYesterdayDateString();
-            const yesterdayReport = await invoke('get_saved_report', { date: yesterday });
+            const yesterdayReport = await invoke('get_saved_report', { date: yesterday, locale: currentLocale });
             if (yesterdayReport) {
               report = yesterdayReport;
               isYesterdayReport = true;
@@ -127,6 +146,7 @@
       } catch (e) {
         error = e.toString();
       } finally {
+        generating = false;
         loading = false;
       }
     }
@@ -145,11 +165,11 @@
         await persistReportPrompt();
       }
       // 只有强制生成的时候才会覆盖已有日报（后端默认规则，这里force指定传入）。
-      await invoke('generate_report', { date: selectedDate, force });
-      const savedReport = await invoke('get_saved_report', { date: selectedDate });
+      await invoke('generate_report', { date: selectedDate, force, locale: currentLocale });
+      const savedReport = await invoke('get_saved_report', { date: selectedDate, locale: currentLocale });
       report = savedReport || { date: selectedDate, content: '', created_at: Date.now() / 1000 };
       isYesterdayReport = false;
-      cache.setReport(selectedDate, report);
+      cache.setReport(currentReportCacheKey, report);
 
       if (
         shouldShowPromptAppliedToast({
@@ -158,7 +178,7 @@
           reportAiMode: savedReport?.ai_mode,
         })
       ) {
-        showToast('已应用附加提示词', 'success');
+        showToast(t('report.promptApplied'), 'success');
       }
     } catch (e) {
       error = e.toString();
@@ -205,9 +225,9 @@
         content: report.content,
         exportDir,
       });
-      showToast(`日报已导出到 ${exportPath}`, 'success');
+      showToast(t('report.exportSuccess', { path: exportPath }), 'success');
     } catch (e) {
-      showToast(`导出失败: ${e}`, 'error');
+      showToast(t('report.exportFailed', { error: e }), 'error');
     } finally {
       exportInProgress = false;
     }
@@ -248,14 +268,15 @@
 
   function formatReportDate(dateStr) {
     const date = new Date(dateStr);
-    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+    return formatLocalizedDate(date, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
   }
 
-  $: if (selectedDate && selectedDate !== lastLoadedDate) {
-    lastLoadedDate = selectedDate;
+  $: if (currentReportCacheKey && currentReportCacheKey !== lastLoadedDate) {
+    const previousReport = report;
+    lastLoadedDate = currentReportCacheKey;
     report = null;
     isYesterdayReport = false;
-    loadReport();
+    loadReport(previousReport);
   }
 
   $: reportMeta = resolveReportMeta(report, config);
@@ -265,10 +286,11 @@
   });
 </script>
 
-<div class="page-shell">
+<div class="page-shell" data-locale={currentLocale}>
   <!-- 页面标题 -->
-  <div class="page-header">
-    <div class="page-title-group">
+  <div class="report-hero">
+    <div class="report-hero-main">
+      <div class="page-title-group report-hero-copy">
       <div class="page-title-badge">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 7h8M8 12h8M8 17h5" />
@@ -277,58 +299,63 @@
       </div>
       <div class="page-title-copy">
         <h2>
-          {selectedDate === getLocalDateString() ? '今日日报' : '历史日报'}
+          {selectedDate === getLocalDateString() ? t('report.todayReport') : t('report.historyReport')}
         </h2>
-        <p>
-        {formatReportDate(selectedDate)}
-        {#if config || report}
-          <span class="ml-1.5 {reportMeta.aiMode === 'summary' ? 'page-inline-chip-brand' : 'page-inline-chip-muted'}">
-            {getAiModeName(reportMeta.aiMode)}
-          </span>
-          {#if reportMeta.aiMode === 'summary' && reportMeta.modelName}
-            <span class="ml-1 page-inline-chip-muted">
-              {reportMeta.modelName}
-            </span>
+        <div class="report-hero-meta">
+          <span class="report-hero-date">{formatReportDate(selectedDate)}</span>
+          {#if config || report}
+            <div class="report-hero-badges">
+              <span class="{reportMeta.aiMode === 'summary' ? 'page-inline-chip-brand' : 'page-inline-chip-muted'}">
+                {getAiModeName(reportMeta.aiMode)}
+              </span>
+              {#if reportMeta.aiMode === 'summary' && reportMeta.modelName}
+                <span class="page-inline-chip-muted">
+                  {reportMeta.modelName}
+                </span>
+              {/if}
+            </div>
           {/if}
-        {/if}
-        </p>
+        </div>
       </div>
     </div>
-    <div class="flex flex-col items-end gap-2">
+      <div class="report-hero-actions">
       <div class="page-toolbar-end">
         <button
           class="page-control-btn {selectedDate === getLocalDateString() ? 'page-control-btn-active' : ''}"
           on:click={() => selectDate(getLocalDateString())}
         >
-          今天
+          {t('report.today')}
         </button>
         <button
           class="page-control-btn {selectedDate === getYesterdayDateString() ? 'page-control-btn-active' : ''}"
           on:click={() => selectDate(getYesterdayDateString())}
         >
-          昨天
+          {t('report.yesterday')}
         </button>
-        <input 
-          type="date"
-          max={getLocalDateString()}
-          bind:value={selectedDate}
-          class="page-control-input"
-        />
+        {#key `report-date-${currentLocale}`}
+          <input
+            type="date"
+            max={getLocalDateString()}
+            bind:value={selectedDate}
+            lang={currentLocale}
+            class="page-control-input"
+          />
+        {/key}
       </div>
-      <span class="page-help-text">可切换到任意历史日期查看历史日报</span>
+      <span class="page-help-text">{t('report.switchDateHint')}</span>
       <div class="flex flex-wrap justify-end gap-2">
         {#if report}
           <button
             class="page-action-secondary min-h-10 px-4 py-2"
             on:click={exportReportMarkdown}
             disabled={exportInProgress}
-            title={config?.daily_report_export_dir ? '' : '未设置默认目录时，点击后会先让你选择导出位置'}
+            title={config?.daily_report_export_dir ? '' : t('report.exportWithoutDefaultDir')}
           >
             {#if exportInProgress}
               <div class="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent"></div>
-              导出中...
+              {t('report.exporting')}
             {:else}
-              导出 Markdown
+              {t('report.exportMarkdown')}
             {/if}
           </button>
           <button
@@ -338,41 +365,42 @@
           >
             {#if generating}
               <div class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-              生成中...
+              {t('report.generating')}
             {:else}
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              重新生成
+              {t('report.regenerate')}
             {/if}
           </button>
         {/if}
       </div>
     </div>
+    </div>
   </div>
 
   {#if config}
     <div class="page-card">
-      <h3 class="settings-card-title">生成选项</h3>
+      <h3 class="settings-card-title">{t('report.generationOptions')}</h3>
       {#if config.ai_mode === 'summary'}
         <div class="space-y-3">
           <div>
-            <label for="daily-report-custom-prompt" class="settings-label mb-1.5">日报附加提示词</label>
+            <label for="daily-report-custom-prompt" class="settings-label mb-1.5">{t('report.promptLabel')}</label>
             <textarea
               id="daily-report-custom-prompt"
               bind:value={config.daily_report_custom_prompt}
               on:change={persistReportPrompt}
               rows="4"
               class="control-input resize-y min-h-[110px]"
-              placeholder="例如：先给结论再展开；更偏周报口吻；突出产出、风险和下一步。"
+              placeholder={t('report.promptPlaceholder')}
             ></textarea>
           </div>
           <p class="settings-note">
-            仅 AI 增强模式生效。这里填写的是附加要求，不会覆盖系统默认的日报结构和基础约束。
+            {t('report.promptHint')}
           </p>
         </div>
       {:else}
-        <p class="settings-empty">当前是基础模板模式，附加提示词仅在「AI 增强」模式下生效。</p>
+        <p class="settings-empty">{t('report.templateModeHint')}</p>
       {/if}
     </div>
   {/if}
@@ -383,8 +411,8 @@
       <div class="empty-state-icon">
         <div class="animate-spin rounded-full h-8 w-8 border-2 border-indigo-500 border-t-transparent"></div>
       </div>
-      <h3 class="empty-state-title">正在整理日报</h3>
-      <p class="empty-state-copy mt-1">正在读取当前日期的历史日报与生成状态...</p>
+      <h3 class="empty-state-title">{t('report.loadingTitle')}</h3>
+      <p class="empty-state-copy mt-1">{t('report.loadingCopy')}</p>
     </div>
   {:else if error}
     <div class="page-banner-error">
@@ -393,11 +421,11 @@
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
         </svg>
-        <span class="font-medium">生成失败</span>
+        <span class="font-medium">{t('report.generateFailed')}</span>
       </div>
       <p class="text-sm">{error}</p>
       </div>
-      <button class="page-action-brand" on:click={() => generateReport(true)}>重试</button>
+      <button class="page-action-brand" on:click={() => generateReport(true)}>{t('common.retry')}</button>
     </div>
   {:else if report}
     <!-- 昨日日报提示 -->
@@ -407,7 +435,7 @@
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          今日日报尚未生成，显示的是昨日日报 ({formatReportDate(report.date)})
+          {t('report.showingYesterday', { date: formatReportDate(report.date) })}
         </div>
         <button
           class="page-action-warn min-h-9 px-3 text-xs rounded-lg shadow-none"
@@ -417,7 +445,7 @@
           {#if generating}
             <div class="animate-spin rounded-full h-3 w-3 border-2 border-white border-t-transparent"></div>
           {:else}
-            ✨ 生成今日日报
+            ✨ {t('report.generatingToday')}
           {/if}
         </button>
       </div>
@@ -425,7 +453,7 @@
     <div class="page-card">
       <div class="text-xs text-slate-400 mb-4 flex items-center gap-2">
         <div class="w-1.5 h-1.5 rounded-full {isYesterdayReport ? 'bg-amber-500' : 'bg-emerald-500'}"></div>
-        {isYesterdayReport ? '昨日日报 - ' : ''}生成于 {new Date(report.created_at * 1000).toLocaleString('zh-CN')}
+        {isYesterdayReport ? t('report.yesterdayPrefix') : ''}{t('report.generatedAt', { time: formatLocalizedDate(new Date(report.created_at * 1000), { year: 'numeric', month: '2-digit', day: '2-digit' }) + ' ' + formatLocalizedTime(new Date(report.created_at * 1000), { hour: '2-digit', minute: '2-digit', second: '2-digit' }) })}
       </div>
       <div
         use:interceptReportLinks
@@ -440,10 +468,10 @@
         <span class="text-3xl">📝</span>
       </div>
       <h3 class="empty-state-title">
-        {selectedDate === getLocalDateString() ? '今日暂无日报' : `${selectedDate} 暂无日报`}
+        {selectedDate === getLocalDateString() ? t('report.noReportToday') : t('report.noReportForDate', { date: selectedDate })}
       </h3>
       <p class="empty-state-copy mb-5">
-        AI 将根据当天的活动记录生成工作总结
+        {t('report.aiWillGenerate')}
       </p>
       <button
         class="page-action-warn min-h-11 px-6 py-3"
@@ -453,10 +481,10 @@
         {#if generating}
           <div class="inline-flex items-center gap-2">
             <div class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-            生成中...
+            {t('report.generating')}
           </div>
         {:else}
-          ✨ 生成{selectedDate === getLocalDateString() ? '今日' : '该日'}日报
+          ✨ {selectedDate === getLocalDateString() ? t('report.generatingToday') : t('report.generatingSelected')}
         {/if}
       </button>
     </div>

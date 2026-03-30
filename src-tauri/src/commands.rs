@@ -1,3 +1,4 @@
+use crate::analysis::AppLocale;
 use crate::config::{
     AiProvider, AiProviderConfig, AppCategoryRule, AppConfig, ModelConfig, WebsiteSemanticRule,
 };
@@ -660,6 +661,42 @@ fn build_fallback_memory_answer(question: &str, references: &[MemorySearchItem])
     answer
 }
 
+fn assistant_empty_question_message(locale: AppLocale) -> &'static str {
+    match locale {
+        AppLocale::ZhCn => "请输入你想问的问题。",
+        AppLocale::ZhTw => "請輸入你想問的問題。",
+        AppLocale::En => "Please enter your question.",
+    }
+}
+
+fn build_assistant_system_prompt(locale: AppLocale) -> &'static str {
+    match locale {
+        AppLocale::ZhCn => {
+            "你是 Work Review 的工作助手。你只能基于给定记录回答。请使用简体中文回答，直接回应用户问题，先给结论再给依据。不要提及内部分析步骤，不要编造不存在的事实。"
+        }
+        AppLocale::ZhTw => {
+            "你是 Work Review 的工作助手。你只能基於給定記錄回答。請使用繁體中文回答，直接回應使用者問題，先給結論再給依據。不要提及內部分析步驟，也不要編造不存在的事實。"
+        }
+        AppLocale::En => {
+            "You are the Work Review assistant. Answer only from the provided records. Reply in English, lead with the conclusion, then support it with evidence. Do not mention internal analysis steps and do not invent facts."
+        }
+    }
+}
+
+fn assistant_output_language_requirement(locale: AppLocale) -> &'static str {
+    match locale {
+        AppLocale::ZhCn => {
+            "8. 最终回答必须使用简体中文，不要混入英文标题或繁体写法。\n"
+        }
+        AppLocale::ZhTw => {
+            "8. 最終回答必須使用繁體中文，不要混入簡體標題或英文標題。\n"
+        }
+        AppLocale::En => {
+            "8. The final answer must be written in English, including headings and bullets.\n"
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssistantTool {
     Memory,
@@ -1154,6 +1191,7 @@ fn build_assistant_prompt(
     intents: Option<&IntentAnalysisResult>,
     review: Option<&WeeklyReviewResult>,
     todos: Option<&TodoExtractionResult>,
+    locale: AppLocale,
 ) -> String {
     let range = match (date_from, date_to) {
         (Some(start), Some(end)) if start == end => format!("{start} 当天"),
@@ -1223,9 +1261,18 @@ fn build_assistant_prompt(
         prompt.push('\n');
     }
 
-    prompt.push_str(
-        "\n输出要求：\n1. 用中文回答，直接回应用户的问题，不要泛泛而谈。\n2. 使用清晰的 Markdown 排版（标题、列表、加粗等）。\n3. 必须按以下固定结构输出：`## 结论`、`## 结果概览`、`## 过程分析`、`## 依据补充`、`## 复盘总结`。\n4. 整体风格是“先结果，再过程”，每个结论自然带上依据，不要写成审计报告。\n5. 列举时使用无序列表，一行一条。\n6. 不要提及内部分析工具名称。\n7. 不要虚构日期、任务或结果。\n",
-    );
+    prompt.push_str(match locale {
+        AppLocale::ZhCn => {
+            "\n输出要求：\n1. 用中文回答，直接回应用户的问题，不要泛泛而谈。\n2. 使用清晰的 Markdown 排版（标题、列表、加粗等）。\n3. 必须按以下固定结构输出：`## 结论`、`## 结果概览`、`## 过程分析`、`## 依据补充`、`## 复盘总结`。\n4. 整体风格是“先结果，再过程”，每个结论自然带上依据，不要写成审计报告。\n5. 列举时使用无序列表，一行一条。\n6. 不要提及内部分析工具名称。\n7. 不要虚构日期、任务或结果。\n"
+        }
+        AppLocale::ZhTw => {
+            "\n輸出要求：\n1. 請用繁體中文回答，直接回應使用者問題，不要空泛。\n2. 使用清楚的 Markdown 排版（標題、列表、粗體等）。\n3. 必須按以下固定結構輸出：`## 結論`、`## 結果概覽`、`## 過程分析`、`## 依據補充`、`## 復盤總結`。\n4. 整體風格是先結果、再過程，每個結論都要自然帶出依據。\n5. 列舉時使用無序列表，一行一條。\n6. 不要提及內部分析工具名稱。\n7. 不要虛構日期、任務或結果。\n"
+        }
+        AppLocale::En => {
+            "\nOutput requirements:\n1. Answer in English and respond to the user's question directly.\n2. Use clear Markdown formatting with headings, lists, and bold text where helpful.\n3. Use this exact structure: `## Conclusion`, `## Overview`, `## Process Analysis`, `## Evidence`, `## Recap`.\n4. Lead with results first, then explain the process and evidence.\n5. When listing points, use unordered bullets with one point per line.\n6. Do not mention internal tool names.\n7. Do not invent dates, tasks, or outcomes.\n"
+        }
+    });
+    prompt.push_str(assistant_output_language_requirement(locale));
 
     prompt
 }
@@ -2146,15 +2193,17 @@ pub async fn chat_work_assistant(
     question: String,
     history: Option<Vec<AssistantChatMessage>>,
     model_config: Option<ModelConfig>,
+    locale: Option<String>,
     date_from: Option<String>,
     date_to: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<AssistantAnswer, AppError> {
     let trimmed_question = question.trim().to_string();
     let history = history.unwrap_or_default();
+    let assistant_locale = AppLocale::from_option(locale.as_deref());
     if trimmed_question.is_empty() {
         return Ok(AssistantAnswer {
-            answer: "请输入你想问的问题。".to_string(),
+            answer: assistant_empty_question_message(assistant_locale).to_string(),
             references: Vec::new(),
             used_ai: false,
             model_name: None,
@@ -2260,9 +2309,10 @@ pub async fn chat_work_assistant(
                 intents.as_ref(),
                 review.as_ref(),
                 todos.as_ref(),
+                assistant_locale,
             );
 
-            let sys = "你是 Work Review 的工作助手。你只能基于给定记录回答。请用中文回答，直接回应用户问题，先给结论再给依据。不要提及内部分析步骤，不要编造不存在的事实。";
+            let sys = build_assistant_system_prompt(assistant_locale);
 
             match generate_text_answer_with_model(ai_model, sys, &prompt).await {
                 Ok(answer) => {
@@ -2386,13 +2436,16 @@ pub async fn extract_todo_items(
 pub async fn generate_report(
     date: String,
     force: Option<bool>,
+    locale: Option<String>,
     app: AppHandle,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<String, AppError> {
+    let report_locale = AppLocale::from_option(locale.as_deref());
+    let report_locale_code = report_locale.as_code();
     // 如果不是强制重新生成，先检查缓存
     if !force.unwrap_or(false) {
         let state_guard = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-        if let Ok(Some(cached)) = state_guard.database.get_report(&date) {
+        if let Ok(Some(cached)) = state_guard.database.get_report(&date, Some(report_locale_code)) {
             log::info!("使用缓存日报: {date}");
             return Ok(cached.content);
         }
@@ -2436,7 +2489,11 @@ pub async fn generate_report(
         crate::avatar_engine::emit_avatar_state(&app, avatar_state);
         crate::avatar_engine::emit_avatar_bubble(
             &app,
-            &crate::avatar_engine::AvatarBubblePayload::info("开始整理日报，稍等我一下。"),
+            &crate::avatar_engine::AvatarBubblePayload::info(match report_locale {
+                AppLocale::ZhCn => "开始整理日报，稍等我一下。",
+                AppLocale::ZhTw => "開始整理日報，稍等我一下。",
+                AppLocale::En => "I'm preparing your daily report. Give me a moment.",
+            }),
         );
     }
 
@@ -2448,12 +2505,13 @@ pub async fn generate_report(
         &config.text_model.model,
         config.text_model.api_key.as_deref(),
         &config.daily_report_custom_prompt,
+        report_locale,
     );
 
     // 生成报告
     let screenshots_dir = data_dir.join("screenshots");
     let report_result = analyzer
-        .generate_report(&date, &stats, &activities, &screenshots_dir)
+        .generate_report(&date, &stats, &activities, &screenshots_dir, report_locale)
         .await;
 
     let avatar_finish_state = {
@@ -2480,9 +2538,17 @@ pub async fn generate_report(
     if let Some(avatar_state) = avatar_finish_state.as_ref() {
         crate::avatar_engine::emit_avatar_state(&app, avatar_state);
         let bubble = if report_result.is_ok() {
-            crate::avatar_engine::AvatarBubblePayload::success("日报整理好了，可以回来看看。")
+            crate::avatar_engine::AvatarBubblePayload::success(match report_locale {
+                AppLocale::ZhCn => "日报整理好了，可以回来看看。",
+                AppLocale::ZhTw => "日報整理好了，可以回來看看。",
+                AppLocale::En => "Your daily report is ready. You can check it now.",
+            })
         } else {
-            crate::avatar_engine::AvatarBubblePayload::info("这次日报整理失败了，稍后可以再试。")
+            crate::avatar_engine::AvatarBubblePayload::info(match report_locale {
+                AppLocale::ZhCn => "这次日报整理失败了，稍后可以再试。",
+                AppLocale::ZhTw => "這次日報整理失敗了，稍後可以再試。",
+                AppLocale::En => "This report run failed. Please try again later.",
+            })
         };
         crate::avatar_engine::emit_avatar_bubble(&app, &bubble);
     }
@@ -2500,6 +2566,7 @@ pub async fn generate_report(
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         let daily_report = DailyReport {
             date: date.clone(),
+            locale: report_locale_code.to_string(),
             content: report.clone(),
             ai_mode: saved_ai_mode,
             model_name: saved_model_name,
@@ -2519,10 +2586,12 @@ pub async fn generate_report(
 #[tauri::command]
 pub async fn get_saved_report(
     date: String,
+    locale: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Option<DailyReport>, AppError> {
+    let report_locale = AppLocale::from_option(locale.as_deref());
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    state.database.get_report(&date)
+    state.database.get_report(&date, Some(report_locale.as_code()))
 }
 
 #[tauri::command]
@@ -2558,7 +2627,7 @@ pub async fn export_report_markdown(
         } else {
             state
                 .database
-                .get_report(&date)?
+                .get_report(&date, Some("zh-CN"))?
                 .ok_or_else(|| AppError::Config("未找到可导出的日报".to_string()))?
                 .content
         };

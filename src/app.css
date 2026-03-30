@@ -130,6 +130,54 @@
   @apply flex flex-wrap items-start justify-between gap-4 mb-5;
 }
 
+.report-hero {
+  @apply mb-5;
+}
+
+.report-hero-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.report-hero-copy {
+  @apply min-w-0;
+}
+
+.report-hero-meta {
+  @apply mt-2 flex flex-wrap items-center gap-2 text-[13px] text-slate-500 dark:text-slate-400;
+}
+
+.report-hero-date {
+  @apply min-w-0;
+}
+
+.report-hero-badges {
+  @apply flex flex-wrap items-center gap-2 min-w-0;
+}
+
+.report-hero-actions {
+  @apply min-w-0 flex flex-col items-end gap-2;
+  justify-self: end;
+  width: fit-content;
+  max-width: 100%;
+}
+
+@media (max-width: 920px) {
+  .report-hero-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .report-hero-actions {
+    @apply items-start;
+  }
+
+  .report-hero-actions .page-toolbar-end {
+    @apply justify-start;
+  }
+}
+
 .page-title-group {
   @apply flex items-start gap-3 min-w-0;
 }
