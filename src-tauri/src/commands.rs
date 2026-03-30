@@ -4366,7 +4366,15 @@ pub async fn get_hourly_summaries(
     date: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<serde_json::Value>, AppError> {
-    let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+    let app_state = state.inner().clone();
+
+    for hour in 0..24 {
+        crate::generate_and_save_summary(&app_state, &date, hour);
+    }
+
+    let state = app_state
+        .lock()
+        .map_err(|e| AppError::Unknown(e.to_string()))?;
     let summaries = state.database.get_hourly_summaries(&date)?;
 
     let result: Vec<serde_json::Value> = summaries

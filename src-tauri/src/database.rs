@@ -1580,11 +1580,11 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, timestamp, app_name, window_title, screenshot_path, ocr_text, category, duration, browser_url, executable_path, semantic_category, semantic_confidence
              FROM activities
-             WHERE timestamp >= ?1 AND timestamp < ?2
+             WHERE timestamp > ?1 AND timestamp - duration < ?2
              ORDER BY timestamp ASC"
         )?;
 
-        let activities: Vec<Activity> = stmt
+        let mut activities: Vec<(i64, Activity)> = stmt
             .query_map(params![start_ts, end_ts], |row| {
                 Ok(Activity {
                     id: Some(row.get(0)?),
@@ -1602,9 +1602,35 @@ impl Database {
                 })
             })?
             .filter_map(|r| r.ok())
+            .filter_map(|mut activity| {
+                let interval_start = activity.timestamp.saturating_sub(activity.duration);
+                let overlap_start = interval_start.max(start_ts);
+                let overlap_end = activity.timestamp.min(end_ts);
+
+                if overlap_end <= overlap_start {
+                    return None;
+                }
+
+                activity.duration = calculate_overlap_duration(
+                    activity.timestamp,
+                    activity.duration,
+                    start_ts,
+                    end_ts,
+                );
+                activity.timestamp = overlap_end;
+
+                Some((overlap_start, activity))
+            })
             .collect();
 
-        Ok(activities)
+        activities.sort_by(|(left_start, left_activity), (right_start, right_activity)| {
+            left_start
+                .cmp(right_start)
+                .then_with(|| left_activity.timestamp.cmp(&right_activity.timestamp))
+                .then_with(|| left_activity.id.cmp(&right_activity.id))
+        });
+
+        Ok(activities.into_iter().map(|(_, activity)| activity).collect())
     }
 
     /// 检查指定小时是否已有摘要
@@ -2289,6 +2315,44 @@ mod tests {
                     bucket.duration == 0
                 }
             }));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn 小时摘要活动应只保留目标小时内的重叠时长() {
+        let db_path = temp_db_path("hourly-summary-overlap");
+        let db = Database::new(&db_path).expect("创建测试数据库失败");
+        let date = "2026-03-27";
+
+        let activity = Activity {
+            id: None,
+            timestamp: local_ts(date, 11, 10),
+            app_name: "Chrome".to_string(),
+            window_title: "docs".to_string(),
+            screenshot_path: "chrome-a.jpg".to_string(),
+            ocr_text: None,
+            category: "browser".to_string(),
+            duration: 20 * 60,
+            browser_url: Some("https://example.com/docs".to_string()),
+            executable_path: None,
+            semantic_category: Some("资料阅读".to_string()),
+            semantic_confidence: Some(80),
+        };
+
+        db.insert_activity(&activity).expect("插入测试数据失败");
+
+        let hour10 = db
+            .get_hourly_activities(date, 10)
+            .expect("读取 10 点小时活动失败");
+        let hour11 = db
+            .get_hourly_activities(date, 11)
+            .expect("读取 11 点小时活动失败");
+
+        assert_eq!(hour10.len(), 1);
+        assert_eq!(hour10[0].duration, 10 * 60);
+        assert_eq!(hour11.len(), 1);
+        assert_eq!(hour11[0].duration, 10 * 60);
 
         let _ = std::fs::remove_file(db_path);
     }

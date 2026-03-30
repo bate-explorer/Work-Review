@@ -1864,7 +1864,7 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
 /// 小时摘要生成任务
 /// 每小时检查一次，为上一个完整小时生成摘要
 /// 为指定日期和小时生成并保存摘要
-fn generate_and_save_summary(state: &Arc<Mutex<AppState>>, date: &str, hour: i32) {
+pub(crate) fn generate_and_save_summary(state: &Arc<Mutex<AppState>>, date: &str, hour: i32) {
     use analysis::hourly::{generate_fallback_summary, HourlyStats};
 
     let activities = {
