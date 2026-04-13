@@ -203,6 +203,12 @@ grim / gnome-screenshot / spectacle
 
 > **说明：** `loginctl`、`dbus-send`、`pgrep` 在多数发行版中已预装。
 > Linux 当前支持 `X11` 以及主流 `Wayland` provider 链（GNOME / KDE Plasma / Sway / Hyprland）。
+
+**Wayland 注意事项：**
+
+- 请以普通用户运行，**不要使用 `sudo`**。`sudo` 会导致 Wayland 环境变量丢失，截图工具无法连接 compositor，产生黑屏截图。
+- 如遇 `--no-sandbox` 提示，使用 `Work_Review --no-sandbox`（不加 sudo）。
+- 若数据目录（如 NTFS 挂载分区）权限不足，请通过 `chown` 或 `/etc/fstab` 的 `uid=` 挂载选项修复权限，而非用 sudo 运行。
 > Linux 下浏览器 URL 已恢复为**最佳努力链路**：
 > Firefox / Zen / LibreWolf / Waterfox 优先走 sessionstore；
 > Chromium 系仍主要依赖窗口标题提取与最近记录兜底，不等同于 macOS 的强能力采集。

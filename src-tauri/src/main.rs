@@ -2582,6 +2582,10 @@ async fn main() {
     // 初始化日志
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    // Linux: 修复 sudo 下丢失的 Wayland/DBus 环境变量
+    #[cfg(target_os = "linux")]
+    linux_session::fix_wayland_env_if_sudo();
+
     log::info!("work回顾助手启动中...");
 
     // 获取数据目录
