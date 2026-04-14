@@ -3178,7 +3178,7 @@ mod tests {
         let mut config = AppConfig::default();
         config.website_semantic_rules = vec![WebsiteSemanticRule {
             domain: "github.com".to_string(),
-            semantic_category: "工作跟进".to_string(),
+            semantic_category: "任务规划".to_string(),
         }];
         config.normalize();
 
@@ -3190,7 +3190,7 @@ mod tests {
         );
 
         assert_eq!(classification.base_category, "browser");
-        assert_eq!(classification.semantic_category, "工作跟进");
+        assert_eq!(classification.semantic_category, "任务规划");
     }
 
     #[test]

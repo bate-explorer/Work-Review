@@ -1039,7 +1039,7 @@ mod tests {
             },
         ];
 
-        normalize_app_category_rules(&mut rules);
+        normalize_app_category_rules(&mut rules, &[]);
 
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].app_name, "Firefox");
@@ -1057,7 +1057,7 @@ mod tests {
             },
             WebsiteSemanticRule {
                 domain: "GitHub.com".to_string(),
-                semantic_category: " 工作跟进 ".to_string(),
+                semantic_category: " 资料调研 ".to_string(),
             },
             WebsiteSemanticRule {
                 domain: "   ".to_string(),
@@ -1071,7 +1071,7 @@ mod tests {
         assert_eq!(config.website_semantic_rules[0].domain, "github.com");
         assert_eq!(
             config.website_semantic_rules[0].semantic_category,
-            "工作跟进"
+            "资料调研"
         );
     }
 
