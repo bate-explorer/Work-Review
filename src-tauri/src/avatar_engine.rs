@@ -133,9 +133,9 @@ pub fn derive_avatar_state_with_rules(
     let app_name = normalize_app_name(app_name);
     let title_lower = window_title.trim().to_lowercase();
     let url_lower = browser_url.unwrap_or_default().trim().to_lowercase();
-    let manual_base_category = crate::monitor::find_category_override(rules, app_name.as_str());
+    let manual_base_category = crate::monitor::find_category_override(rules, app_name.as_str(), &[]);
     let base_category =
-        crate::monitor::categorize_app_with_rules(rules, app_name.as_str(), window_title);
+        crate::monitor::categorize_app_with_rules(rules, app_name.as_str(), window_title, &[]);
     let classification = crate::activity_classifier::classify_activity_with_base_category(
         app_name.as_str(),
         window_title,

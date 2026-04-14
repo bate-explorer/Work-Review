@@ -1,6 +1,6 @@
 use crate::analysis::AppLocale;
 use crate::config::{
-    AiProvider, AiProviderConfig, AppCategoryRule, AppConfig, ModelConfig, WebsiteSemanticRule,
+    AiProvider, AiProviderConfig, AppCategoryRule, AppConfig, CustomSemanticCategory, ModelConfig, WebsiteSemanticRule,
 };
 use crate::database::Database;
 use crate::database::{
@@ -4969,7 +4969,7 @@ pub async fn get_app_category_overview(
         .map(|item| {
             let app_name = item.app_name;
             let override_category =
-                crate::monitor::find_category_override(&state.config.app_category_rules, &app_name);
+                crate::monitor::find_category_override(&state.config.app_category_rules, &app_name, &state.config.custom_categories);
             AppCategoryOverviewItem {
                 app_name: app_name.clone(),
                 category: override_category.unwrap_or(item.category),
@@ -4977,6 +4977,7 @@ pub async fn get_app_category_overview(
                 is_overridden: crate::monitor::find_category_override(
                     &state.config.app_category_rules,
                     &app_name,
+                    &state.config.custom_categories,
                 )
                 .is_some(),
             }
@@ -4986,7 +4987,8 @@ pub async fn get_app_category_overview(
 
 fn upsert_app_category_rule(config: &mut AppConfig, app_name: &str, category: &str) {
     let normalized_app_name = crate::monitor::normalize_display_app_name(app_name);
-    let normalized_category = crate::monitor::normalize_category_key(category);
+    let custom_keys: Vec<String> = config.custom_categories.iter().map(|c| c.key.clone()).collect();
+    let normalized_category = crate::config::normalize_category_key_private(category, &custom_keys);
     let match_key = normalized_app_name.to_lowercase();
 
     if let Some(rule) = config.app_category_rules.iter_mut().find(|rule| {
@@ -5008,7 +5010,8 @@ fn reclassify_app_history_in_state(
     app_name: &str,
     category: &str,
 ) -> Result<usize, AppError> {
-    let target_category = crate::monitor::normalize_category_key(category);
+    let custom_keys: Vec<String> = state.config.custom_categories.iter().map(|c| c.key.clone()).collect();
+    let target_category = crate::config::normalize_category_key_private(category, &custom_keys);
     let activities = state
         .database
         .get_activities_by_normalized_app_name(app_name)?;
@@ -5110,6 +5113,282 @@ pub async fn reclassify_app_history(
 ) -> Result<usize, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
     reclassify_app_history_in_state(&state, &app_name, &category)
+}
+
+/// 分类信息（前端展示用）
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CategoryInfo {
+    pub key: String,
+    pub name: String,
+    pub color: String,
+    pub icon: String,
+    pub is_custom: bool,
+}
+
+#[tauri::command]
+pub async fn get_categories(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<CategoryInfo>, AppError> {
+    let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+    let mut result = Vec::new();
+
+    // 7 个预设分类
+    let builtins: Vec<(&str, &str, &str, &str)> = vec![
+        ("development", "开发工具", "blue", "⚡"),
+        ("browser", "浏览器", "green", "🌐"),
+        ("communication", "通讯协作", "yellow", "💬"),
+        ("office", "办公软件", "purple", "📝"),
+        ("design", "设计工具", "pink", "🎨"),
+        ("entertainment", "娱乐摸鱼", "red", "🎮"),
+        ("other", "其他", "gray", "📁"),
+    ];
+    for (key, name, color, icon) in builtins {
+        result.push(CategoryInfo {
+            key: key.to_string(),
+            name: name.to_string(),
+            color: color.to_string(),
+            icon: icon.to_string(),
+            is_custom: false,
+        });
+    }
+
+    // 用户自定义分类
+    for c in &state.config.custom_categories {
+        result.push(CategoryInfo {
+            key: c.key.clone(),
+            name: c.name.clone(),
+            color: c.color.clone(),
+            icon: c.icon.clone(),
+            is_custom: true,
+        });
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn save_custom_category(
+    key: String,
+    name: String,
+    color: String,
+    icon: String,
+    app: AppHandle,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), AppError> {
+    let key = key.trim().to_lowercase();
+    let name = name.trim().to_string();
+    let color = color.trim().to_string();
+    let icon = icon.trim().to_string();
+
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        return Err(AppError::Unknown("分类标识只能包含小写字母、数字和连字符".to_string()));
+    }
+    if name.is_empty() {
+        return Err(AppError::Unknown("分类名称不能为空".to_string()));
+    }
+    if !color.starts_with('#') || color.len() != 7 {
+        return Err(AppError::Unknown("颜色格式无效，需为 #RRGGBB".to_string()));
+    }
+    // 不允许覆盖预设分类
+    if matches!(key.as_str(),
+        "development" | "browser" | "communication" | "office"
+        | "design" | "entertainment" | "other"
+    ) {
+        return Err(AppError::Unknown("不能覆盖预设分类".to_string()));
+    }
+
+    let next_config = {
+        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        let mut next_config = state.config.clone();
+
+        let custom = crate::config::CustomCategory {
+            key: key.clone(),
+            name: name.clone(),
+            color: color.clone(),
+            icon: icon.clone(),
+        };
+
+        if let Some(existing) = next_config.custom_categories.iter_mut().find(|c| c.key == key) {
+            *existing = custom;
+        } else {
+            next_config.custom_categories.push(custom);
+        }
+
+        next_config
+    };
+
+    persist_app_config(next_config, app, state.inner())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_custom_category(
+    key: String,
+    reassign_to: Option<String>,
+    app: AppHandle,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<usize, AppError> {
+    let key = key.trim().to_lowercase();
+    let fallback = reassign_to.unwrap_or_else(|| "other".to_string());
+
+    let affected = {
+        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        // 统计引用该分类的规则数
+        state.config.app_category_rules.iter()
+            .filter(|r| r.category == key)
+            .count()
+    };
+
+    let next_config = {
+        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        let mut next_config = state.config.clone();
+
+        // 删除自定义分类
+        next_config.custom_categories.retain(|c| c.key != key);
+
+        // 重定向引用该分类的规则
+        for rule in &mut next_config.app_category_rules {
+            if rule.category == key {
+                rule.category = fallback.clone();
+            }
+        }
+
+        next_config
+    };
+
+    persist_app_config(next_config, app, state.inner())?;
+    Ok(affected)
+}
+
+/// 语义分类信息（前端展示用）
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SemanticCategoryInfo {
+    pub key: String,
+    pub name: String,
+    pub is_custom: bool,
+}
+
+#[tauri::command]
+pub async fn get_semantic_categories(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<SemanticCategoryInfo>, AppError> {
+    let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+    let mut result = Vec::new();
+
+    // 13 个预设语义分类（key 即中文名，与 SEMANTIC_LABELS 对应）
+    let builtins: Vec<(&str, &str)> = vec![
+        ("编码开发", "编码开发"),
+        ("内容撰写", "内容撰写"),
+        ("资料阅读", "资料阅读"),
+        ("资料调研", "资料调研"),
+        ("任务规划", "任务规划"),
+        ("设计创作", "设计创作"),
+        ("AI 协作", "AI 协作"),
+        ("即时聊天", "即时聊天"),
+        ("会议沟通", "会议沟通"),
+        ("视频内容", "视频内容"),
+        ("音乐音频", "音乐音频"),
+        ("休息娱乐", "休息娱乐"),
+        ("未知活动", "未知活动"),
+    ];
+    for (key, name) in builtins {
+        result.push(SemanticCategoryInfo {
+            key: key.to_string(),
+            name: name.to_string(),
+            is_custom: false,
+        });
+    }
+
+    // 用户自定义语义分类
+    for c in &state.config.custom_semantic_categories {
+        result.push(SemanticCategoryInfo {
+            key: c.key.clone(),
+            name: c.name.clone(),
+            is_custom: true,
+        });
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn save_custom_semantic_category(
+    key: String,
+    name: String,
+    app: AppHandle,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), AppError> {
+    let key = key.trim().to_lowercase();
+    let name = name.trim().to_string();
+
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        return Err(AppError::Unknown("分类标识只能包含小写字母、数字和连字符".to_string()));
+    }
+    if name.is_empty() {
+        return Err(AppError::Unknown("分类名称不能为空".to_string()));
+    }
+    // 不允许覆盖预设语义分类
+    if crate::config::is_valid_builtin_semantic_category(&name) {
+        return Err(AppError::Unknown("不能使用与预设分类相同的名称".to_string()));
+    }
+
+    let next_config = {
+        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        let mut next_config = state.config.clone();
+
+        let custom = CustomSemanticCategory {
+            key: key.clone(),
+            name: name.clone(),
+        };
+
+        if let Some(existing) = next_config.custom_semantic_categories.iter_mut().find(|c| c.key == key) {
+            *existing = custom;
+        } else {
+            next_config.custom_semantic_categories.push(custom);
+        }
+
+        next_config
+    };
+
+    persist_app_config(next_config, app, state.inner())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_custom_semantic_category(
+    key: String,
+    app: AppHandle,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<usize, AppError> {
+    let key = key.trim().to_lowercase();
+
+    let affected = {
+        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        // 统计引用该分类的规则数
+        state.config.website_semantic_rules.iter()
+            .filter(|r| r.semantic_category == key)
+            .count()
+    };
+
+    let next_config = {
+        let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+        let mut next_config = state.config.clone();
+
+        // 删除自定义语义分类
+        next_config.custom_semantic_categories.retain(|c| c.key != key);
+
+        // 重定向引用该分类的规则到"未知活动"
+        for rule in &mut next_config.website_semantic_rules {
+            if rule.semantic_category == key {
+                rule.semantic_category = "未知活动".to_string();
+            }
+        }
+
+        next_config
+    };
+
+    persist_app_config(next_config, app, state.inner())?;
+    Ok(affected)
 }
 
 #[tauri::command]

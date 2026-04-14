@@ -19,6 +19,7 @@
   } from '$lib/i18n/index.js';
   import { resolveAppIconSrc } from '../lib/utils/appVisuals.js';
   import { formatBrowserUrlForDisplay } from '../lib/utils/browserUrl.js';
+  import { semanticCategoryStore } from '../lib/stores/categories.js';
 
   function getLocalDateString() {
     const now = new Date();
@@ -124,21 +125,62 @@
   let editingDomainKey = null;
   let editingSemanticCategory = '';
   let savingDomainKey = null;
-  const semanticCategoryOptions = [
-    '编码开发',
-    '内容撰写',
-    '资料阅读',
-    '资料调研',
-    '任务规划',
-    '设计创作',
-    'AI 协作',
-    '即时聊天',
-    '会议沟通',
-    '视频内容',
-    '音乐音频',
-    '休息娱乐',
-    '未知活动',
-  ];
+
+  // 自定义语义分类（新建 + 删除）
+  let showCreateSemanticCategory = false;
+  let newSemanticCategoryName = '';
+  let semanticCategorySaving = false;
+  let pendingDeleteSemanticCategory = null; // { key, name }
+
+  function cancelDeleteSemanticCategory() { pendingDeleteSemanticCategory = null; }
+  async function confirmDeleteSemanticCategory() {
+    if (!pendingDeleteSemanticCategory) return;
+    const { key, name } = pendingDeleteSemanticCategory;
+    pendingDeleteSemanticCategory = null;
+    semanticCategorySaving = true;
+    try {
+      const affected = await invoke('delete_custom_semantic_category', { key });
+      await semanticCategoryStore.refresh();
+      showToast(
+        t('overview.semanticCategoryDeleted', { category: name, count: affected }),
+        'success'
+      );
+    } catch (e) {
+      showToast(e.toString(), 'error');
+    } finally {
+      semanticCategorySaving = false;
+    }
+  }
+
+  async function createCustomSemanticCategory() {
+    const name = newSemanticCategoryName.trim();
+    if (!name) {
+      showToast(t('overview.semanticCategoryNameRequired'), 'error');
+      return;
+    }
+    try {
+      let key = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      if (!key || key === '-') {
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+          hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+        }
+        key = 'scat-' + Math.abs(hash).toString(36);
+      }
+      await invoke('save_custom_semantic_category', { key, name });
+      await semanticCategoryStore.refresh();
+      showCreateSemanticCategory = false;
+      newSemanticCategoryName = '';
+      showToast(t('overview.semanticCategoryCreated'), 'success');
+    } catch (e) {
+      showToast(e.toString(), 'error');
+    }
+  }
+
+  function getSemanticCategoryDisplayName(cat) {
+    if (cat.is_custom) return cat.name;
+    return translateSemanticCategoryLabel(cat.key);
+  }
   
   // 浏览器统计弹窗
   let selectedBrowser = null;
@@ -250,9 +292,8 @@
   }
 
   function getDomainSemanticLabel(domain) {
-    return domain?.semantic_category?.trim()
-      ? translateSemanticCategoryLabel(domain.semantic_category.trim())
-      : t('overview.autoDetected');
+    if (!domain?.semantic_category?.trim()) return t('overview.autoDetected');
+    return semanticCategoryStore.getSemanticCategoryDisplayName(domain.semantic_category.trim());
   }
 
   function startDomainSemanticEdit(domain) {
@@ -261,13 +302,14 @@
   }
 
   function getSemanticCategoryOptions() {
+    const options = $semanticCategoryStore.map(c => c.key);
     if (
       editingSemanticCategory &&
-      !semanticCategoryOptions.includes(editingSemanticCategory)
+      !options.includes(editingSemanticCategory)
     ) {
-      return [editingSemanticCategory, ...semanticCategoryOptions];
+      return [editingSemanticCategory, ...options];
     }
-    return semanticCategoryOptions;
+    return options;
   }
 
   function cancelDomainSemanticEdit() {
@@ -372,7 +414,7 @@
       title: t('overview.changeDomainCategoryTitle'),
       message: t('overview.changeDomainCategoryMessage', {
         domain: domain.domain,
-        category: translateSemanticCategoryLabel(nextCategory),
+        category: semanticCategoryStore.getSemanticCategoryDisplayName(nextCategory),
       }),
       confirmText: t('overview.confirmChange'),
       cancelText: t('overview.cancel'),
@@ -396,7 +438,7 @@
       showToast(
         t('overview.domainSemanticUpdated', {
           domain: domain.domain,
-          category: translateSemanticCategoryLabel(nextCategory),
+          category: semanticCategoryStore.getSemanticCategoryDisplayName(nextCategory),
           count: updatedCount,
         }),
         'success'
@@ -484,6 +526,7 @@
   }
 
   onMount(async () => {
+    semanticCategoryStore.refresh();
     appUsageViewMode = readStoredOverviewViewMode(APP_USAGE_VIEW_MODE_KEY, 'row');
     hourlyActivityViewMode = readStoredOverviewViewMode(HOURLY_ACTIVITY_VIEW_MODE_KEY, 'column');
     overviewViewModeReady = true;
@@ -954,36 +997,90 @@
               <p class="text-xs text-slate-400 dark:text-slate-500">
                 {t('overview.semanticCategoryHelp')}
               </p>
-              <div class="flex flex-col gap-2 md:flex-row">
-                <select
-                  id={`semantic-category-${domain.domain}`}
-                  class="flex-1 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-700 dark:text-slate-100"
-                  bind:value={editingSemanticCategory}
-                >
-                  {#each getSemanticCategoryOptions() as option}
-                    <option value={option}>{translateSemanticCategoryLabel(option)}</option>
-                  {/each}
-                </select>
-                <div class="flex items-center gap-2">
-                  <button
-                    class="px-3 py-2 rounded-lg bg-primary-500 text-white text-sm disabled:opacity-50"
-                    disabled={!editingSemanticCategory.trim() || savingDomainKey === domain.domain}
-                    on:click={() => saveDomainSemanticRule(domain)}
-                  >
-                    {#if savingDomainKey === domain.domain}
-                      {t('overview.saving')}
-                    {:else}
-                      {t('overview.save')}
+              <div class="mt-2 grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4">
+                {#each $semanticCategoryStore as cat}
+                  <div class="relative">
+                    <button
+                      on:click={() => editingSemanticCategory = cat.key}
+                      class="segment-btn rounded-lg border px-3 py-2 text-sm flex items-center justify-center gap-1.5 w-full
+                        {editingSemanticCategory === cat.key
+                          ? 'settings-segment-success'
+                          : 'settings-segment-idle'}"
+                      disabled={savingDomainKey === domain.domain}
+                    >
+                      <span>{getSemanticCategoryDisplayName(cat)}</span>
+                    </button>
+                    {#if cat.is_custom}
+                      <button
+                        on:click|stopPropagation={() => pendingDeleteSemanticCategory = { key: cat.key, name: getSemanticCategoryDisplayName(cat) }}
+                        class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs leading-none hover:bg-red-600 transition-opacity shadow-sm"
+                        style="opacity: 0.6;"
+                        on:mouseenter={(e) => e.target.style.opacity = '1'}
+                        on:mouseleave={(e) => e.target.style.opacity = '0.6'}
+                        disabled={semanticCategorySaving}
+                        title={t('overview.deleteSemanticCategory')}
+                      >×</button>
                     {/if}
-                  </button>
-                  <button
-                    class="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 text-sm text-slate-600 dark:text-slate-300"
-                    disabled={savingDomainKey === domain.domain}
-                    on:click={cancelDomainSemanticEdit}
-                  >
-                    {t('overview.cancel')}
-                  </button>
+                  </div>
+                {/each}
+                <button
+                  on:click={() => showCreateSemanticCategory = !showCreateSemanticCategory}
+                  class="segment-btn rounded-lg border px-3 py-2 text-sm settings-segment-idle
+                    flex items-center justify-center gap-1.5 border-dashed"
+                  disabled={semanticCategorySaving}
+                >
+                  <span class="text-xs">{showCreateSemanticCategory ? '×' : '+'}</span>
+                  <span>{t('overview.createSemanticCategory')}</span>
+                </button>
+              </div>
+
+              {#if showCreateSemanticCategory}
+                <div class="mt-2 p-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 space-y-2">
+                  <p class="text-xs text-slate-500 dark:text-slate-400">{t('overview.createSemanticCategoryHint')}</p>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="text"
+                      bind:value={newSemanticCategoryName}
+                      placeholder={t('overview.semanticCategoryNamePlaceholder')}
+                      class="flex-1 px-2 py-1 text-sm rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700"
+                    />
+                  </div>
+                  <div class="flex justify-end gap-2">
+                    <button
+                      on:click={() => showCreateSemanticCategory = false}
+                      class="px-3 py-1 text-xs rounded-lg text-slate-500 hover:text-slate-700"
+                    >
+                      {t('overview.cancel')}
+                    </button>
+                    <button
+                      on:click={createCustomSemanticCategory}
+                      class="px-3 py-1 text-xs rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+                    >
+                      {t('overview.confirmChange')}
+                    </button>
+                  </div>
                 </div>
+              {/if}
+
+              <div class="flex items-center gap-2 mt-2">
+                <button
+                  class="px-3 py-2 rounded-lg bg-primary-500 text-white text-sm disabled:opacity-50"
+                  disabled={!editingSemanticCategory.trim() || savingDomainKey === domain.domain}
+                  on:click={() => saveDomainSemanticRule(domain)}
+                >
+                  {#if savingDomainKey === domain.domain}
+                    {t('overview.saving')}
+                  {:else}
+                    {t('overview.save')}
+                  {/if}
+                </button>
+                <button
+                  class="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 text-sm text-slate-600 dark:text-slate-300"
+                  disabled={savingDomainKey === domain.domain}
+                  on:click={cancelDomainSemanticEdit}
+                >
+                  {t('overview.cancel')}
+                </button>
               </div>
             </div>
           {/if}
@@ -1038,4 +1135,38 @@
     </div>
   </div>
 </div>
+{/if}
+
+<!-- 语义分类删除确认弹窗 -->
+{#if pendingDeleteSemanticCategory}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="fixed inset-0 z-[200] bg-slate-950/40 backdrop-blur-sm flex items-center justify-center animate-fadeIn"
+    role="button"
+    tabindex="0"
+    on:click|self={cancelDeleteSemanticCategory}
+    on:keydown={(e) => e.key === 'Escape' && cancelDeleteSemanticCategory()}
+  >
+    <div class="w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl p-6 mx-4">
+      <h3 class="text-base font-semibold text-slate-800 dark:text-white">{t('overview.deleteSemanticCategoryTitle')}</h3>
+      <p class="mt-2 text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+        {t('overview.deleteSemanticCategoryMessage', { category: pendingDeleteSemanticCategory.name })}
+      </p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button
+          on:click={cancelDeleteSemanticCategory}
+          class="px-4 py-2 text-sm rounded-lg text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700"
+        >
+          {t('overview.cancel')}
+        </button>
+        <button
+          on:click={confirmDeleteSemanticCategory}
+          class="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700"
+        >
+          {t('overview.confirmDeleteSemanticCategory')}
+        </button>
+      </div>
+    </div>
+  </div>
 {/if}

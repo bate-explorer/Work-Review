@@ -170,8 +170,8 @@ impl ScreenshotService {
     }
 
     /// 执行截屏（Windows）
-    /// 优先使用 Windows Graphics Capture API (Win11)
-    /// 失败时降级使用 GDI BitBlt (Win10 兼容)
+    /// 优先使用 GDI BitBlt（完全静默，无隐私边框闪烁）
+    /// 失败时降级到 Windows Graphics Capture API（Win11 会显示黄色边框）
     #[cfg(target_os = "windows")]
     fn capture_impl(
         &self,
@@ -199,7 +199,24 @@ impl ScreenshotService {
             };
         }
 
-        // 先尝试 Windows Graphics Capture API
+        // 优先使用 GDI BitBlt（静默，无边框闪烁）
+        match self.capture_with_gdi(active_window) {
+            Ok((pixels, width, height)) => {
+                return self.persist_rgba_capture(
+                    &pixels,
+                    width,
+                    height,
+                    &screenshots_dir,
+                    &time_str,
+                    now.timestamp(),
+                );
+            }
+            Err(e) => {
+                log::warn!("GDI BitBlt 失败: {e}，降级到 Windows Graphics Capture");
+            }
+        }
+
+        // 降级使用 Windows Graphics Capture API（可能显示黄色边框）
         match self.capture_with_wgc(&screenshots_dir, &time_str, active_window) {
             Ok(result) => {
                 return self.persist_existing_png_capture(
@@ -210,21 +227,9 @@ impl ScreenshotService {
                 );
             }
             Err(e) => {
-                log::warn!("Windows Graphics Capture 失败: {e}，降级到 GDI 模式");
+                log::warn!("Windows Graphics Capture 也失败: {e}");
+                return Err(AppError::Screenshot(format!("截图失败（GDI 和 WGC 均不可用）: {e}")));
             }
-        }
-
-        // 降级使用 GDI BitBlt（Windows 10 兼容方案）
-        match self.capture_with_gdi(active_window) {
-            Ok((pixels, width, height)) => self.persist_rgba_capture(
-                &pixels,
-                width,
-                height,
-                &screenshots_dir,
-                &time_str,
-                now.timestamp(),
-            ),
-            Err(e) => Err(AppError::Screenshot(format!("GDI 截图也失败: {e}"))),
         }
     }
 
@@ -709,15 +714,16 @@ impl ScreenshotService {
         screenshots_dir: &Path,
         temp_name: &str,
     ) -> Result<RgbaImage> {
-        match self.capture_display_with_screencapture_macos(screen, screenshots_dir, temp_name) {
-            Ok(image) => Ok(image),
-            Err(error) => {
-                log::warn!("macOS 原生 screencapture 失败，回退 screenshots crate: {error}");
-                let fallback = screen
-                    .capture()
-                    .map_err(|e| AppError::Screenshot(format!("截屏失败: {e}")))?;
+        // 优先使用 screenshots crate（CGDisplay::screenshot），不会触发系统隐私边框闪烁
+        // screencapture CLI 在 macOS Sonoma/Sequoia 上会显示黄色边框隐私指示器
+        match screen.capture() {
+            Ok(fallback) => {
                 RgbaImage::from_raw(fallback.width(), fallback.height(), fallback.into_raw())
                     .ok_or_else(|| AppError::Screenshot("图像转换失败".to_string()))
+            }
+            Err(error) => {
+                log::warn!("screenshots crate 失败，回退 macOS 原生 screencapture: {error}");
+                self.capture_display_with_screencapture_macos(screen, screenshots_dir, temp_name)
             }
         }
     }

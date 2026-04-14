@@ -29,7 +29,7 @@
 <svelte:window on:keydown={handleKeydown} />
 
 {#if dialogState}
-  <div class="fixed inset-0 z-[140] flex items-center justify-center px-4 py-6 bg-slate-950/48 backdrop-blur-md animate-fadeIn">
+  <div class="fixed inset-0 z-[200] flex items-center justify-center px-4 py-6 bg-slate-950/48 backdrop-blur-md animate-fadeIn">
     <div
       class="w-full max-w-md rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl shadow-slate-950/24 dark:shadow-black/50 p-6"
       role="dialog"

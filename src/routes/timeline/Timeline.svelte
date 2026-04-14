@@ -4,9 +4,9 @@
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-shell';
   import { cache } from '../../lib/stores/cache.js';
-  import { confirm } from '../../lib/stores/confirm.js';
   import { showToast } from '../../lib/stores/toast.js';
   import { appIconStore, getIconCacheKey, preloadAppIcons } from '../../lib/stores/iconCache.js';
+  import { categoryStore, hexToRGBA } from '../../lib/stores/categories.js';
   import {
     formatDurationLocalized,
     formatLocalizedTime,
@@ -76,26 +76,151 @@
 
   const unsubIcons = appIconStore.subscribe(v => appIcons = v);
 
-  // 分类名称和颜色
-  const categoryInfo = {
-    development: { color: 'blue', icon: '⚡' },
-    browser: { color: 'green', icon: '🌐' },
-    communication: { color: 'yellow', icon: '💬' },
-    office: { color: 'purple', icon: '📝' },
-    design: { color: 'pink', icon: '🎨' },
-    entertainment: { color: 'red', icon: '🎮' },
-    other: { color: 'gray', icon: '📁' },
-  };
-  const categoryOptions = Object.keys(categoryInfo).map((value) => ({
-    value,
-  }));
+  // 分类元数据（从 store 动态获取，支持自定义分类）
   let categorySaving = false;
+  let showCreateCategory = false;
+  let newCategoryName = '';
+  let newCategoryColor = '#6366f1';
+  let newCategoryIcon = '🏷️';
+
+  // 创建分类后的应用确认（内联渲染，确保在详情弹窗之上）
+  let pendingApplyCategory = null; // { key, name }
+  function cancelApplyCategory() { pendingApplyCategory = null; }
+  async function confirmApplyCategory() {
+    if (!pendingApplyCategory || !selectedActivity) return;
+    const { key } = pendingApplyCategory;
+    pendingApplyCategory = null;
+    await doChangeAppCategory(selectedActivity, key);
+  }
+
+  // 修改分类确认（内联渲染，替代全局 confirm）
+  let pendingChangeCategory = null; // { activity, category, categoryName }
+  function cancelChangeCategory() { pendingChangeCategory = null; }
+  async function confirmChangeCategory() {
+    if (!pendingChangeCategory) return;
+    const { activity, category } = pendingChangeCategory;
+    pendingChangeCategory = null;
+    await doChangeAppCategory(activity, category);
+  }
+
+  // 弹出确认 → 用户点击分类按钮时触发
+  async function changeAppCategory(activity, nextCategory) {
+    if (!activity || !nextCategory || categorySaving) return;
+    if ((activity.category || 'other') === nextCategory) return;
+    const targetInfo = getCategoryMeta(nextCategory);
+    pendingChangeCategory = {
+      activity,
+      category: nextCategory,
+      categoryName: targetInfo.name,
+    };
+  }
+
+  // 确认后实际执行分类修改
+  async function doChangeAppCategory(activity, nextCategory) {
+    categorySaving = true;
+    try {
+      const targetInfo = getCategoryMeta(nextCategory);
+      const updatedCount = await invoke('set_app_category_rule', {
+        appName: activity.app_name,
+        category: nextCategory,
+        syncHistory: true,
+      });
+
+      const appMatchKey = normalizeAppMatchKey(activity.app_name);
+      activities = activities.map((item) =>
+        normalizeAppMatchKey(item.app_name) === appMatchKey
+          ? { ...item, category: nextCategory }
+          : item
+      );
+
+      if (selectedActivity && normalizeAppMatchKey(selectedActivity.app_name) === appMatchKey) {
+        selectedActivity = { ...selectedActivity, category: nextCategory };
+      }
+
+      cache.invalidate('overview');
+
+      showToast(
+        t('timeline.categoryUpdated', {
+          appName: activity.app_name,
+          category: targetInfo.name,
+          count: updatedCount,
+        }),
+        'success'
+      );
+    } catch (e) {
+      console.error('修改应用默认分类失败:', e);
+      showToast(
+        t('timeline.categoryUpdateFailed', {
+          appName: activity.app_name,
+          error: e,
+        }),
+        'error'
+      );
+    } finally {
+      categorySaving = false;
+    }
+  }
+
+  const CATEGORY_EMOJIS = [
+    '💻', '🌐', '💬', '📝', '🎨', '🎮', '📁',
+    '⚡', '📊', '🔧', '🛠️', '💡', '🎯', '📌',
+    '🏷️', '🏠', '📚', '🎵', '📷', '🔬', '🧪',
+    '💼', '🧑‍💻', '🧑‍🎨', '📱', '🚀', '⭐', '🔒',
+  ];
 
   function getCategoryMeta(category) {
-    return {
-      ...(categoryInfo[category] || categoryInfo.other),
-      name: translateCategoryLabel(category || 'other'),
-    };
+    return categoryStore.getCategoryMeta(category || 'other');
+  }
+
+  function getCategoryDisplayName(cat) {
+    // 内置分类用 i18n 翻译，自定义分类用用户输入的名称
+    if (cat.is_custom) return cat.name;
+    return translateCategoryLabel(cat.key);
+  }
+
+  function isCustomCategory(info) {
+    return info.isCustom;
+  }
+
+  function iconStyle(info) {
+    if (!info.isCustom) return '';
+    return `background: ${hexToRGBA(info.color, 0.95)}`;
+  }
+
+  async function createCustomCategory() {
+    const name = newCategoryName.trim();
+    if (!name) {
+      showToast(t('timeline.categoryNameRequired'), 'error');
+      return;
+    }
+    try {
+      // 生成 key：只保留小写字母、数字、连字符；中文字符转为 hash 片段确保 key 非空且合法
+      let key = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      if (!key || key === '-') {
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+          hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+        }
+        key = 'cat-' + Math.abs(hash).toString(36);
+      }
+      await invoke('save_custom_category', {
+        key,
+        name,
+        color: newCategoryColor,
+        icon: newCategoryIcon,
+      });
+      await categoryStore.refresh();
+      showCreateCategory = false;
+      newCategoryName = '';
+      showToast(t('timeline.categoryCreated'), 'success');
+
+      // 创建成功后弹窗确认是否应用到当前应用
+      if (selectedActivity) {
+        pendingApplyCategory = { key, name };
+      }
+    } catch (e) {
+      showToast(e.toString(), 'error');
+    }
   }
 
   // 格式化时间
@@ -438,70 +563,50 @@
     }
   }
 
+  // 删除自定义分类
+  let pendingDeleteCategory = null; // { key, name }
+  function cancelDeleteCategory() { pendingDeleteCategory = null; }
+  async function confirmDeleteCategory() {
+    if (!pendingDeleteCategory) return;
+    const { key, name } = pendingDeleteCategory;
+    pendingDeleteCategory = null;
+    categorySaving = true;
+    try {
+      const affected = await invoke('delete_custom_category', { key });
+      await categoryStore.refresh();
+      cache.invalidate('overview');
+
+      // 如果当前选中的应用使用了被删除的分类，更新本地状态
+      if (selectedActivity && (selectedActivity.category || 'other') === key) {
+        selectedActivity = { ...selectedActivity, category: 'other' };
+      }
+      const appMatchKey = normalizeAppMatchKey(selectedActivity?.app_name || '');
+      if (appMatchKey) {
+        activities = activities.map((item) =>
+          normalizeAppMatchKey(item.app_name) === appMatchKey && (item.category || 'other') === key
+            ? { ...item, category: 'other' }
+            : item
+        );
+      }
+
+      showToast(
+        t('timeline.categoryDeleted', { category: name, count: affected }),
+        'success'
+      );
+    } catch (e) {
+      showToast(e.toString(), 'error');
+    } finally {
+      categorySaving = false;
+    }
+  }
+
   // 关闭详情
   function closeDetail() {
     selectedActivity = null;
     categorySaving = false;
-  }
-
-  async function changeAppCategory(activity, nextCategory) {
-    if (!activity || !nextCategory || categorySaving) return;
-    if ((activity.category || 'other') === nextCategory) return;
-
-    const targetInfo = getCategoryMeta(nextCategory);
-    const confirmed = await confirm({
-      title: t('timeline.changeCategoryTitle'),
-      message: t('timeline.changeCategoryMessage', {
-        appName: activity.app_name,
-        category: targetInfo.name,
-      }),
-      confirmText: t('timeline.confirmChange'),
-      cancelText: t('timeline.cancel'),
-      tone: 'warning',
-    });
-    if (!confirmed) return;
-
-    categorySaving = true;
-    try {
-      const updatedCount = await invoke('set_app_category_rule', {
-        appName: activity.app_name,
-        category: nextCategory,
-        syncHistory: true,
-      });
-
-      const appMatchKey = normalizeAppMatchKey(activity.app_name);
-      activities = activities.map((item) =>
-        normalizeAppMatchKey(item.app_name) === appMatchKey
-          ? { ...item, category: nextCategory }
-          : item
-      );
-
-      if (selectedActivity && normalizeAppMatchKey(selectedActivity.app_name) === appMatchKey) {
-        selectedActivity = { ...selectedActivity, category: nextCategory };
-      }
-
-      cache.invalidate('overview');
-
-      showToast(
-        t('timeline.categoryUpdated', {
-          appName: activity.app_name,
-          category: targetInfo.name,
-          count: updatedCount,
-        }),
-        'success'
-      );
-    } catch (e) {
-      console.error('修改应用默认分类失败:', e);
-      showToast(
-        t('timeline.categoryUpdateFailed', {
-          appName: activity.app_name,
-          error: e,
-        }),
-        'error'
-      );
-    } finally {
-      categorySaving = false;
-    }
+    pendingChangeCategory = null;
+    pendingApplyCategory = null;
+    pendingDeleteCategory = null;
   }
 
   // 记录上次加载的日期
@@ -520,6 +625,8 @@
   $: isToday = selectedDate === getLocalDateString();
 
   onMount(async () => {
+    categoryStore.refresh();
+
     if (!document.hidden) {
       clockInterval = setInterval(() => {
         currentTime = new Date();
@@ -681,7 +788,8 @@
                 <div class="timeline-featured-copy">
                   <div class="timeline-entry-meta timeline-entry-meta-featured">
                     <div class="timeline-entry-app">
-                      <div class={`timeline-app-icon timeline-app-icon-${info.color}`}>
+                      <div class={`timeline-app-icon ${info.isCustom ? '' : `timeline-app-icon-${info.color}`}`}
+                           style={iconStyle(info)}>
                         {#if getTimelineIconSrc(activity)}
                           <img src={getTimelineIconSrc(activity)}
                                alt={activity.app_name}
@@ -708,7 +816,8 @@
             {:else}
               <div class="timeline-entry-card timeline-entry-card-compact timeline-entry-card-compact-grid">
                 <div class="timeline-entry-app timeline-entry-app-compact">
-                  <div class={`timeline-app-icon timeline-app-icon-${info.color}`}>
+                  <div class={`timeline-app-icon ${info.isCustom ? '' : `timeline-app-icon-${info.color}`}`}
+                       style={iconStyle(info)}>
                     {#if getTimelineIconSrc(activity)}
                       <img src={getTimelineIconSrc(activity)}
                            alt={activity.app_name}
@@ -777,12 +886,13 @@
     on:click|self={closeDetail}
     on:keydown={(e) => e.key === 'Escape' && closeDetail()}
   >
-    <div class="timeline-detail-dialog bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-auto" role="dialog" aria-modal="true">
+    <div class="timeline-detail-dialog bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-auto relative" role="dialog" aria-modal="true">
       <!-- 头部 -->
       <div class="timeline-detail-header p-6 border-b border-slate-200 dark:border-slate-700">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <div class={`timeline-app-icon timeline-app-icon-lg timeline-app-icon-${info.color}`}>
+            <div class={`timeline-app-icon timeline-app-icon-lg ${info.isCustom ? '' : `timeline-app-icon-${info.color}`}`}
+                 style={iconStyle(info)}>
               {#if getTimelineIconSrc(selectedActivity)}
                 <img src={getTimelineIconSrc(selectedActivity)}
                      alt={selectedActivity.app_name}
@@ -819,19 +929,87 @@
             {/if}
           </div>
           <div class="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-            {#each categoryOptions as option}
-              <button
-                on:click={() => changeAppCategory(selectedActivity, option.value)}
-                class="segment-btn rounded-lg border px-3 py-2 text-sm
-                  {(selectedActivity.category || 'other') === option.value
-                    ? 'settings-segment-success'
-                    : 'settings-segment-idle'}"
-                disabled={categorySaving}
-              >
-                {translateCategoryLabel(option.value)}
-              </button>
+            {#each $categoryStore as cat}
+              <div class="relative">
+                <button
+                  on:click={() => changeAppCategory(selectedActivity, cat.key)}
+                  class="segment-btn rounded-lg border px-3 py-2 text-sm flex items-center justify-center gap-1.5 w-full
+                    {(selectedActivity.category || 'other') === cat.key
+                      ? 'settings-segment-success'
+                      : 'settings-segment-idle'}"
+                  disabled={categorySaving}
+                >
+                  <span class="text-xs">{cat.icon}</span>
+                  <span>{getCategoryDisplayName(cat)}</span>
+                </button>
+                {#if cat.is_custom}
+                  <button
+                    on:click|stopPropagation={() => pendingDeleteCategory = { key: cat.key, name: getCategoryDisplayName(cat) }}
+                    class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs leading-none opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-opacity shadow-sm"
+                    style="opacity: 0.6;"
+                    on:mouseenter={(e) => e.target.style.opacity = '1'}
+                    on:mouseleave={(e) => e.target.style.opacity = '0.6'}
+                    disabled={categorySaving}
+                    title={t('timeline.deleteCategory')}
+                  >×</button>
+                {/if}
+              </div>
             {/each}
+            <button
+              on:click={() => showCreateCategory = !showCreateCategory}
+              class="segment-btn rounded-lg border px-3 py-2 text-sm settings-segment-idle
+                flex items-center justify-center gap-1.5 border-dashed"
+              disabled={categorySaving}
+            >
+              <span class="text-xs">{showCreateCategory ? '×' : '+'}</span>
+              <span>{t('timeline.createCategory')}</span>
+            </button>
           </div>
+
+          {#if showCreateCategory}
+            <div class="mt-3 p-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 space-y-2">
+              <p class="text-xs text-slate-500 dark:text-slate-400">{t('timeline.createCategoryHint')}</p>
+              <div class="flex items-center gap-2">
+                <input
+                  type="text"
+                  bind:value={newCategoryName}
+                  placeholder={t('timeline.categoryNamePlaceholder')}
+                  class="flex-1 px-2 py-1 text-sm rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700"
+                />
+                <input
+                  type="color"
+                  bind:value={newCategoryColor}
+                  class="w-8 h-8 rounded cursor-pointer border-0"
+                />
+                <span class="text-lg">{newCategoryIcon}</span>
+              </div>
+              <div class="flex flex-wrap gap-1">
+                {#each CATEGORY_EMOJIS as emoji}
+                  <button
+                    type="button"
+                    on:click={() => newCategoryIcon = emoji}
+                    class="w-7 h-7 flex items-center justify-center text-base rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors {newCategoryIcon === emoji ? 'bg-primary-100 dark:bg-primary-900/40 ring-1 ring-primary-400' : ''}"
+                  >
+                    {emoji}
+                  </button>
+                {/each}
+              </div>
+              <div class="flex justify-end gap-2">
+                <button
+                  on:click={() => showCreateCategory = false}
+                  class="px-3 py-1 text-xs rounded-lg text-slate-500 hover:text-slate-700"
+                >
+                  {t('timeline.cancel')}
+                </button>
+                <button
+                  on:click={createCustomCategory}
+                  class="px-3 py-1 text-xs rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+                >
+                  {t('timeline.confirmChange')}
+                </button>
+              </div>
+            </div>
+          {/if}
         </div>
 
         <!-- 截图预览 -->
@@ -884,6 +1062,67 @@
           </div>
         {/if}
       </div>
+    </div>
+  </div>
+{/if}
+
+<!-- 分类修改确认（页面顶层，z-index 高于详情弹窗 z-[140]） -->
+{#if selectedActivity && (pendingChangeCategory || pendingApplyCategory || pendingDeleteCategory)}
+  {@const isApply = !!pendingApplyCategory}
+  {@const isDelete = !!pendingDeleteCategory}
+  {@const confirmAction = isDelete ? confirmDeleteCategory : (isApply ? confirmApplyCategory : confirmChangeCategory)}
+  {@const cancelAction = isDelete ? cancelDeleteCategory : (isApply ? cancelApplyCategory : cancelChangeCategory)}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="fixed inset-0 z-[150] bg-slate-950/40 backdrop-blur-sm flex items-center justify-center animate-fadeIn"
+    role="button"
+    tabindex="0"
+    on:click|self={cancelAction}
+    on:keydown={(e) => e.key === 'Escape' && cancelAction()}
+  >
+    <div class="w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl p-6 mx-4">
+      {#if isDelete}
+        <h3 class="text-base font-semibold text-slate-800 dark:text-white">{t('timeline.deleteCategoryTitle')}</h3>
+        <p class="mt-2 text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+          {t('timeline.deleteCategoryMessage', { category: pendingDeleteCategory.name })}
+        </p>
+        <div class="mt-5 flex justify-end gap-2">
+          <button
+            on:click={cancelAction}
+            class="px-4 py-2 text-sm rounded-lg text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700"
+          >
+            {t('timeline.cancel')}
+          </button>
+          <button
+            on:click={confirmAction}
+            class="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700"
+          >
+            {t('timeline.confirmDelete')}
+          </button>
+        </div>
+      {:else}
+        {@const categoryName = isApply ? pendingApplyCategory.name : pendingChangeCategory.categoryName}
+        {@const appName = selectedActivity.app_name}
+        <h3 class="text-base font-semibold text-slate-800 dark:text-white">{t('timeline.changeCategoryTitle')}</h3>
+        <p class="mt-2 text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+          {t('timeline.changeCategoryMessage', { appName, category: categoryName })}
+        </p>
+        <div class="mt-5 flex justify-end gap-2">
+          <button
+            on:click={cancelAction}
+            class="px-4 py-2 text-sm rounded-lg text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700"
+          >
+            {t('timeline.cancel')}
+          </button>
+          <button
+            on:click={confirmAction}
+            class="px-4 py-2 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+          >
+            {t('timeline.confirmChange')}
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -949,7 +1188,7 @@
 
   .timeline-rail {
     position: absolute;
-    left: calc(1.25rem + var(--timeline-anchor-width) - 0.85rem);
+    left: calc(1.25rem + var(--timeline-anchor-width) + 0.5rem);
     top: 1.25rem;
     bottom: 1.25rem;
     width: 2px;
@@ -985,7 +1224,7 @@
   .timeline-entry-anchor {
     position: relative;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: flex-start;
     gap: 0.65rem;
     min-height: 100%;
@@ -1000,9 +1239,8 @@
   }
 
   .timeline-entry-marker {
-    position: absolute;
-    top: 0.95rem;
-    right: 0.05rem;
+    flex-shrink: 0;
+    margin-left: auto;
     width: 0.8rem;
     height: 0.8rem;
     border-radius: 999px;
@@ -1544,7 +1782,7 @@
     }
 
     .timeline-rail {
-      left: calc(0.85rem + var(--timeline-anchor-width) - 0.72rem);
+      left: calc(0.85rem + var(--timeline-anchor-width) + 0.4rem);
     }
 
     .timeline-entry {
@@ -1574,7 +1812,6 @@
     }
 
     .timeline-entry-marker {
-      top: 0.8rem;
       width: 0.68rem;
       height: 0.68rem;
     }

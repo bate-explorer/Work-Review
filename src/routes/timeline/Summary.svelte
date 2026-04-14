@@ -219,7 +219,7 @@
   .summary-editorial-shell::before {
     content: '';
     position: absolute;
-    left: calc(0.25rem + var(--summary-anchor-width) - 0.85rem);
+    left: calc(0.25rem + var(--summary-anchor-width) + 0.5rem);
     top: 0.4rem;
     bottom: 0.4rem;
     width: 2px;

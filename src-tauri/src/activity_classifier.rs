@@ -28,14 +28,15 @@ pub fn classify_activity_with_base_category(
     let app_lower = normalized_app.to_lowercase();
     let title_lower = normalized_title.to_lowercase();
     let url_lower = browser_url.unwrap_or_default().trim().to_lowercase();
-    let base_category = crate::monitor::normalize_category_key(base_category);
+    // 保留自定义分类 key：仅做 trim/lowercase，不回退到 "other"
+    let base_category = base_category.trim().to_lowercase();
 
-    let mut scores: HashMap<&'static str, i32> = HashMap::new();
-    let mut evidence: HashMap<&'static str, Vec<String>> = HashMap::new();
+    let mut scores: HashMap<String, i32> = HashMap::new();
+    let mut evidence: HashMap<String, Vec<String>> = HashMap::new();
 
-    let mut add = |label: &'static str, score: i32, reason: &str| {
-        *scores.entry(label).or_insert(0) += score;
-        evidence.entry(label).or_default().push(reason.to_string());
+    let mut add = |label: &str, score: i32, reason: &str| {
+        *scores.entry(label.to_string()).or_insert(0) += score;
+        evidence.entry(label.to_string()).or_default().push(reason.to_string());
     };
 
     match base_category.as_str() {
@@ -45,7 +46,11 @@ pub fn classify_activity_with_base_category(
         "design" => add("设计创作", 24, "基础类别命中设计工具"),
         "browser" => add("资料阅读", 16, "基础类别命中浏览器"),
         "entertainment" => add("休息娱乐", 8, "基础类别命中娱乐"),
-        _ => {}
+        "other" => {}
+        _ => {
+            // 自定义分类：给一个基础分数，使用分类名作为语义标签
+            add(&base_category, 12, "基础类别命中自定义分类");
+        }
     }
 
     if contains_any(
@@ -493,10 +498,10 @@ pub fn classify_activity_with_base_category(
         add("编码开发", 28, "浏览器地址命中代码评审或仓库文件页");
     }
 
-    let mut ranked: Vec<(&'static str, i32)> = scores.into_iter().collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    let mut ranked: Vec<(String, i32)> = scores.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-    let Some((top_label, top_score)) = ranked.first().copied() else {
+    let Some((top_label, top_score)) = ranked.first() else {
         return ActivityClassification {
             base_category,
             semantic_category: "未知活动".to_string(),
@@ -504,11 +509,12 @@ pub fn classify_activity_with_base_category(
             evidence: vec!["未命中任何有效分类信号".to_string()],
         };
     };
+    let top_score = *top_score;
 
     let second_score = ranked.get(1).map(|(_, score)| *score).unwrap_or_default();
     let score_gap = top_score - second_score;
     let threshold = semantic_threshold(top_label);
-    let high_risk = matches!(top_label, "会议沟通" | "休息娱乐");
+    let high_risk = matches!(top_label.as_str(), "会议沟通" | "休息娱乐");
 
     if top_score < threshold || (high_risk && score_gap < 10) {
         return ActivityClassification {
@@ -522,12 +528,13 @@ pub fn classify_activity_with_base_category(
     }
 
     let confidence = ((top_score + score_gap).clamp(55, 98)) as u8;
+    let top_label_owned = ranked.into_iter().next().map(|(l, _)| l).unwrap_or_default();
 
     ActivityClassification {
         base_category: base_category.to_string(),
-        semantic_category: top_label.to_string(),
+        semantic_category: top_label_owned.clone(),
         confidence,
-        evidence: evidence.remove(top_label).unwrap_or_default(),
+        evidence: evidence.remove(&top_label_owned).unwrap_or_default(),
     }
 }
 

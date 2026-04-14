@@ -770,7 +770,7 @@ pub(crate) fn resolve_activity_classification(
     browser_url: Option<&str>,
 ) -> activity_classifier::ActivityClassification {
     let base_category =
-        monitor::categorize_app_with_rules(&config.app_category_rules, app_name, window_title);
+        monitor::categorize_app_with_rules(&config.app_category_rules, app_name, window_title, &config.custom_categories);
     let mut classification = activity_classifier::classify_activity_with_base_category(
         app_name,
         window_title,
@@ -3013,6 +3013,12 @@ async fn main() {
             commands::set_app_category_rule,
             commands::set_domain_semantic_rule,
             commands::reclassify_app_history,
+            commands::get_categories,
+            commands::save_custom_category,
+            commands::delete_custom_category,
+            commands::get_semantic_categories,
+            commands::save_custom_semantic_category,
+            commands::delete_custom_semantic_category,
             commands::get_storage_stats,
             commands::get_hourly_summaries,
             commands::get_activity,

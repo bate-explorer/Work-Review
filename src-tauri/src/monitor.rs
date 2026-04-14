@@ -1418,7 +1418,7 @@ mod tests {
         }];
 
         assert_eq!(
-            categorize_app_with_rules(&rules, "MuMu模拟器", "项目设计稿"),
+            categorize_app_with_rules(&rules, "MuMu模拟器", "项目设计稿", &[]),
             "entertainment"
         );
         assert_eq!(categorize_app("MuMu模拟器", "项目设计稿"), "other");
@@ -1432,7 +1432,7 @@ mod tests {
         }];
 
         assert_eq!(
-            categorize_app_with_rules(&rules, "firefox", "搜索页"),
+            categorize_app_with_rules(&rules, "firefox", "搜索页", &[]),
             "office"
         );
     }
@@ -4128,6 +4128,15 @@ pub fn normalize_category_key(category: &str) -> String {
     }
 }
 
+/// 检查分类 key 是否有效（预设 + 自定义）
+pub fn is_valid_category_key(category: &str, custom_categories: &[crate::config::CustomCategory]) -> bool {
+    let lowered = category.trim().to_lowercase();
+    matches!(lowered.as_str(),
+        "development" | "browser" | "communication" | "office"
+        | "design" | "entertainment" | "other"
+    ) || custom_categories.iter().any(|c| c.key == lowered)
+}
+
 fn normalized_app_rule_key(app_name: &str) -> String {
     normalize_display_app_name(app_name).to_lowercase()
 }
@@ -4135,8 +4144,10 @@ fn normalized_app_rule_key(app_name: &str) -> String {
 pub fn find_category_override(
     rules: &[crate::config::AppCategoryRule],
     app_name: &str,
+    custom_categories: &[crate::config::CustomCategory],
 ) -> Option<String> {
     let normalized_app_name = normalized_app_rule_key(app_name);
+    let custom_keys: Vec<String> = custom_categories.iter().map(|c| c.key.clone()).collect();
 
     rules.iter().find_map(|rule| {
         let normalized_rule = normalized_app_rule_key(&rule.app_name);
@@ -4144,7 +4155,7 @@ pub fn find_category_override(
             || normalized_app_name.contains(&normalized_rule)
             || normalized_rule.contains(&normalized_app_name)
         {
-            Some(normalize_category_key(&rule.category))
+            Some(crate::config::normalize_category_key_private(&rule.category, &custom_keys))
         } else {
             None
         }
@@ -4155,8 +4166,9 @@ pub fn categorize_app_with_rules(
     rules: &[crate::config::AppCategoryRule],
     app_name: &str,
     window_title: &str,
+    custom_categories: &[crate::config::CustomCategory],
 ) -> String {
-    find_category_override(rules, app_name)
+    find_category_override(rules, app_name, custom_categories)
         .unwrap_or_else(|| categorize_app(app_name, window_title))
 }
 

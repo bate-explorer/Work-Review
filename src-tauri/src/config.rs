@@ -237,6 +237,28 @@ pub struct AppCategoryRule {
     pub category: String,
 }
 
+/// 用户自定义分类
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CustomCategory {
+    /// 唯一标识（slug 格式，如 "project-mgmt"）
+    pub key: String,
+    /// 显示名称（用户输入，如 "项目管理"）
+    pub name: String,
+    /// 颜色（hex 格式，如 "#8B5CF6"）
+    pub color: String,
+    /// 图标（emoji，如 "📋"）
+    pub icon: String,
+}
+
+/// 用户自定义语义分类
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CustomSemanticCategory {
+    /// 唯一标识（slug 格式，如 "project-mgmt"）
+    pub key: String,
+    /// 显示名称（用户输入，如 "项目管理"）
+    pub name: String,
+}
+
 /// 网站语义分类规则
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WebsiteSemanticRule {
@@ -406,9 +428,15 @@ pub struct AppConfig {
     /// 应用分类覆盖规则
     #[serde(default)]
     pub app_category_rules: Vec<AppCategoryRule>,
+    /// 用户自定义分类
+    #[serde(default)]
+    pub custom_categories: Vec<CustomCategory>,
     /// 网站语义分类覆盖规则
     #[serde(default)]
     pub website_semantic_rules: Vec<WebsiteSemanticRule>,
+    /// 用户自定义语义分类
+    #[serde(default)]
+    pub custom_semantic_categories: Vec<CustomSemanticCategory>,
     /// 存储配置
     #[serde(default)]
     pub storage: StorageConfig,
@@ -525,7 +553,9 @@ impl Default for AppConfig {
             vision_model: ModelConfig::default_vision(),
             privacy: PrivacyConfig::default(),
             app_category_rules: Vec::new(),
+            custom_categories: Vec::new(),
             website_semantic_rules: Vec::new(),
+            custom_semantic_categories: Vec::new(),
             storage: StorageConfig::default(),
             daily_report_custom_prompt: String::new(),
             daily_report_export_dir: None,
@@ -564,8 +594,13 @@ impl AppConfig {
     /// 规范化配置，兼容旧字段并补齐助手可用的文本模型档案
     pub fn normalize(&mut self) {
         self.migrate_legacy_config();
-        normalize_app_category_rules(&mut self.app_category_rules);
-        normalize_website_semantic_rules(&mut self.website_semantic_rules);
+        normalize_custom_categories(&mut self.custom_categories);
+        normalize_app_category_rules(
+            &mut self.app_category_rules,
+            &self.custom_categories,
+        );
+        normalize_website_semantic_rules(&mut self.website_semantic_rules, &self.custom_semantic_categories);
+        normalize_custom_semantic_categories(&mut self.custom_semantic_categories);
         self.screenshot_interval = normalize_screenshot_interval(self.screenshot_interval);
         self.avatar_scale = normalize_avatar_scale(self.avatar_scale);
         self.avatar_opacity = normalize_avatar_opacity(self.avatar_opacity);
@@ -712,15 +747,37 @@ fn default_connection_status() -> String {
     "untested".to_string()
 }
 
-fn normalize_category_key(value: &str) -> String {
-    match value.trim().to_lowercase().as_str() {
+pub fn normalize_category_key_private(value: &str, custom_keys: &[String]) -> String {
+    let trimmed = value.trim().to_lowercase();
+    match trimmed.as_str() {
         "development" | "browser" | "communication" | "office" | "design" | "entertainment"
-        | "other" => value.trim().to_lowercase(),
+        | "other" => trimmed,
+        _ if custom_keys.iter().any(|k| k == &trimmed) => trimmed,
         _ => "other".to_string(),
     }
 }
 
-fn normalize_app_category_rules(rules: &mut Vec<AppCategoryRule>) {
+fn normalize_custom_categories(categories: &mut Vec<CustomCategory>) {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    categories.retain(|c| {
+        let key = c.key.trim().to_lowercase();
+        // key 只允许小写字母、数字、连字符
+        let valid_key = !key.is_empty()
+            && key
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-');
+        // name 非空，color 以 # 开头且 7 字符
+        let valid_color = c.color.starts_with('#') && c.color.len() == 7;
+        if !valid_key || c.name.trim().is_empty() || !valid_color {
+            return false;
+        }
+        seen.insert(key)
+    });
+}
+
+fn normalize_app_category_rules(rules: &mut Vec<AppCategoryRule>, custom_categories: &[CustomCategory]) {
     use std::collections::HashSet;
 
     let mut normalized_rules = Vec::new();
@@ -738,9 +795,10 @@ fn normalize_app_category_rules(rules: &mut Vec<AppCategoryRule>) {
             continue;
         }
 
+        let custom_keys: Vec<String> = custom_categories.iter().map(|c| c.key.clone()).collect();
         normalized_rules.push(AppCategoryRule {
             app_name: normalized_app_name,
-            category: normalize_category_key(&rule.category),
+            category: normalize_category_key_private(&rule.category, &custom_keys),
         });
     }
 
@@ -748,9 +806,10 @@ fn normalize_app_category_rules(rules: &mut Vec<AppCategoryRule>) {
     *rules = normalized_rules;
 }
 
-fn normalize_website_semantic_rules(rules: &mut Vec<WebsiteSemanticRule>) {
+fn normalize_website_semantic_rules(rules: &mut Vec<WebsiteSemanticRule>, custom_semantic_categories: &[CustomSemanticCategory]) {
     use std::collections::HashSet;
 
+    let custom_keys: Vec<String> = custom_semantic_categories.iter().map(|c| c.key.clone()).collect();
     let mut normalized_rules = Vec::new();
     let mut seen = HashSet::new();
 
@@ -761,6 +820,13 @@ fn normalize_website_semantic_rules(rules: &mut Vec<WebsiteSemanticRule>) {
 
         let semantic_category = rule.semantic_category.trim();
         if semantic_category.is_empty() {
+            continue;
+        }
+
+        // 验证语义分类：必须是内置名称或自定义 key
+        let is_builtin = is_valid_builtin_semantic_category(semantic_category);
+        let is_custom = custom_keys.iter().any(|k| k == semantic_category);
+        if !is_builtin && !is_custom {
             continue;
         }
 
@@ -776,6 +842,31 @@ fn normalize_website_semantic_rules(rules: &mut Vec<WebsiteSemanticRule>) {
 
     normalized_rules.reverse();
     *rules = normalized_rules;
+}
+
+pub(crate) fn is_valid_builtin_semantic_category(category: &str) -> bool {
+    matches!(category,
+        "编码开发" | "内容撰写" | "资料阅读" | "资料调研" | "任务规划"
+        | "设计创作" | "AI 协作" | "即时聊天" | "会议沟通" | "视频内容"
+        | "音乐音频" | "休息娱乐" | "未知活动"
+    )
+}
+
+fn normalize_custom_semantic_categories(categories: &mut Vec<CustomSemanticCategory>) {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    categories.retain(|c| {
+        let key = c.key.trim().to_lowercase();
+        let valid_key = !key.is_empty()
+            && key
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-');
+        if !valid_key || c.name.trim().is_empty() {
+            return false;
+        }
+        seen.insert(key)
+    });
 }
 
 fn normalize_avatar_scale(value: f64) -> f64 {
