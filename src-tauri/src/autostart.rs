@@ -13,21 +13,30 @@ use crate::error::{AppError, Result};
 #[cfg(windows)]
 const AUTOSTART_LAUNCH_ARG: &str = "--autostart";
 #[cfg(windows)]
+const AUTOSTART_HIDDEN_ARG: &str = "--hidden";
+#[cfg(windows)]
 const AUTOSTART_NOT_INITIALIZED_ERROR: &str = "开机自启动服务未初始化，请重启应用后重试";
 
 #[cfg(windows)]
 pub struct AutoLaunchManager(AutoLaunch);
 
 #[cfg(windows)]
+fn quote_windows_command_path(path: &str) -> String {
+    let trimmed = path.trim().trim_matches('"');
+    format!("\"{trimmed}\"")
+}
+
+#[cfg(windows)]
 pub fn init_autostart(app: &AppHandle) -> Result<()> {
     let current_exe =
         current_exe().map_err(|e| AppError::Unknown(format!("无法获取当前执行路径: {e}")))?;
+    let quoted_exe = quote_windows_command_path(&current_exe.display().to_string());
 
     let mut builder = AutoLaunchBuilder::new();
     builder.set_app_name(&app.package_info().name);
-    builder.set_app_path(&current_exe.display().to_string());
+    builder.set_app_path(&quoted_exe);
     builder.set_windows_enable_mode(WindowsEnableMode::Dynamic);
-    builder.set_args(&[AUTOSTART_LAUNCH_ARG]);
+    builder.set_args(&[AUTOSTART_LAUNCH_ARG, AUTOSTART_HIDDEN_ARG]);
 
     let auto = builder
         .build()
@@ -35,6 +44,23 @@ pub fn init_autostart(app: &AppHandle) -> Result<()> {
 
     app.manage(AutoLaunchManager(auto));
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::quote_windows_command_path;
+
+    #[test]
+    fn windows自启动路径应始终带引号() {
+        assert_eq!(
+            quote_windows_command_path(r#"C:\Program Files\Work Review\work-review.exe"#),
+            r#""C:\Program Files\Work Review\work-review.exe""#
+        );
+        assert_eq!(
+            quote_windows_command_path(r#""C:\Work Review\work-review.exe""#),
+            r#""C:\Work Review\work-review.exe""#
+        );
+    }
 }
 
 #[cfg(not(windows))]

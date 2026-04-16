@@ -87,6 +87,19 @@ function polygonHotspot(points, fill = HOTSPOT_CYAN_FILL, stroke = HOTSPOT_CYAN_
   return { kind: 'polygon', points, fill, stroke };
 }
 
+function motionBounds(x, y, width, height) {
+  return { x, y, width, height };
+}
+
+function mouseMotionModel(anchorX, anchorY, boundsX, boundsY, boundsWidth, boundsHeight, bend = 0.24) {
+  return {
+    anchorX,
+    anchorY,
+    bounds: motionBounds(boundsX, boundsY, boundsWidth, boundsHeight),
+    bend,
+  };
+}
+
 const STANDARD_KEYBOARD_FRAME_BY_GROUP = {
   'digit-1': standardKeyboard0,
   'digit-2': standardKeyboard1,
@@ -296,41 +309,11 @@ export const AVATAR_PRESET_OPTIONS = [
       lastMouseInputAtMs: 0,
     },
   },
-  {
-    id: 'keyboard-focus',
-    titleKey: 'settingsAppearance.avatarPresetKeyboardFocusTitle',
-    descriptionKey: 'settingsAppearance.avatarPresetKeyboardFocusDesc',
-    previewMotionBeat: 26,
-    previewInputActivity: {
-      keyboardActive: true,
-      mouseActive: true,
-      keyboardGroup: 'space',
-      keyboardVisualKey: 'Space',
-      mouseGroup: 'mouse-left',
-      cursorRatioX: 0.34,
-      cursorRatioY: 0.63,
-      lastKeyboardInputAtMs: 0,
-      lastMouseInputAtMs: 0,
-    },
-  },
-  {
-    id: 'minimal-office',
-    titleKey: 'settingsAppearance.avatarPresetMinimalOfficeTitle',
-    descriptionKey: 'settingsAppearance.avatarPresetMinimalOfficeDesc',
-    previewMotionBeat: 34,
-    previewInputActivity: {
-      keyboardActive: true,
-      mouseActive: true,
-      keyboardGroup: 'key-w',
-      keyboardVisualKey: 'KeyW',
-      mouseGroup: 'mouse-left',
-      cursorRatioX: 0.66,
-      cursorRatioY: 0.44,
-      lastKeyboardInputAtMs: 0,
-      lastMouseInputAtMs: 0,
-    },
-  },
 ];
+
+const AVAILABLE_AVATAR_PRESET_IDS = new Set(
+  AVATAR_PRESET_OPTIONS.map((option) => option.id)
+);
 
 const AVATAR_PRESET_REGISTRY = {
   'original-standard': {
@@ -358,17 +341,18 @@ const AVATAR_PRESET_REGISTRY = {
     contentTransform: '',
     keyboardVisualLayers: STANDARD_MODEL_LEFT_KEYS,
     keyboardVisualClip: STANDARD_MODEL_KEYBOARD_CLIP,
+    keyboardHotspotsAboveCover: true,
     mouseVisualLayers: null,
     mouseVisualClip: STANDARD_MODEL_INTERACTION.trackpad,
-    mouseHotspotsAboveCover: true,
+    mouseMotionModel: mouseMotionModel(260, 258, 86, 116, 128, 92, 0.18),
     showKeyboardOverlay: false,
     showMouseDevice: false,
-    showMouseArm: false,
+    showMouseArm: true,
     keyboardOverlayOpacity: 0,
     handOpacity: 0,
     mouseDeviceOpacity: 0,
     mouseOverlayOpacity: 0,
-    mouseArmOpacity: 0,
+    mouseArmOpacity: 1,
   },
   'minimal-office': {
     ...STANDARD_BASE,
@@ -379,21 +363,23 @@ const AVATAR_PRESET_REGISTRY = {
     contentTransform: '',
     keyboardVisualLayers: GAMEPAD_KEYBOARD_LAYER_BY_KEY,
     keyboardVisualClip: GAMEPAD_MODEL_LEFT_CLUSTER_CLIP,
+    keyboardHotspotsAboveCover: true,
     mouseVisualLayers: GAMEPAD_MOUSE_LAYER_BY_GROUP,
     mouseVisualClip: GAMEPAD_MODEL_RIGHT_CLUSTER_CLIP,
+    mouseMotionModel: mouseMotionModel(286, 292, 320, 184, 156, 110, 0.22),
     showKeyboardOverlay: false,
     showMouseDevice: false,
-    showMouseArm: false,
+    showMouseArm: true,
     keyboardOverlayOpacity: 0,
     handOpacity: 0,
     mouseDeviceOpacity: 0,
     mouseOverlayOpacity: 0,
-    mouseArmOpacity: 0,
+    mouseArmOpacity: 1,
   },
 };
 
 export function normalizeAvatarPresetId(presetId) {
-  return AVATAR_PRESET_REGISTRY[presetId] ? presetId : AVATAR_PRESET_DEFAULT;
+  return AVAILABLE_AVATAR_PRESET_IDS.has(presetId) ? presetId : AVATAR_PRESET_DEFAULT;
 }
 
 export function getAvatarPresetDefinition(presetId) {

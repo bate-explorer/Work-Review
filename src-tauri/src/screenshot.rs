@@ -1489,6 +1489,7 @@ mod tests {
                 width: 1280,
                 height: 800,
             }),
+            is_minimized: false,
         };
 
         assert_eq!(
@@ -1505,6 +1506,7 @@ mod tests {
             browser_url: None,
             executable_path: None,
             window_bounds: None,
+            is_minimized: false,
         };
 
         assert_eq!(capture_target_point(Some(&active_window)), None);

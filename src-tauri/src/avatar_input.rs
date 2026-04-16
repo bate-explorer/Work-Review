@@ -177,6 +177,165 @@ fn mouse_group_from_event_type(event_type: cocoa::appkit::NSEventType) -> u8 {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn windows_virtual_key_to_avatar_key_code(virtual_key: u32) -> Option<u16> {
+    match virtual_key {
+        0x30 => Some(29),
+        0x31 => Some(18),
+        0x32 => Some(19),
+        0x33 => Some(20),
+        0x34 => Some(21),
+        0x35 => Some(23),
+        0x36 => Some(22),
+        0x37 => Some(26),
+        0x38 => Some(28),
+        0x39 => Some(25),
+        0x41 => Some(0),
+        0x42 => Some(11),
+        0x43 => Some(8),
+        0x44 => Some(2),
+        0x45 => Some(14),
+        0x46 => Some(3),
+        0x47 => Some(5),
+        0x48 => Some(4),
+        0x49 => Some(34),
+        0x4A => Some(38),
+        0x4B => Some(40),
+        0x4C => Some(37),
+        0x4D => Some(46),
+        0x4E => Some(45),
+        0x4F => Some(31),
+        0x50 => Some(35),
+        0x51 => Some(12),
+        0x52 => Some(15),
+        0x53 => Some(1),
+        0x54 => Some(17),
+        0x55 => Some(32),
+        0x56 => Some(9),
+        0x57 => Some(13),
+        0x58 => Some(7),
+        0x59 => Some(16),
+        0x5A => Some(6),
+        0x08 => Some(51),
+        0x09 => Some(48),
+        0x0D => Some(36),
+        0x14 => Some(57),
+        0x1B => Some(53),
+        0x20 => Some(49),
+        0x25 => Some(123),
+        0x26 => Some(126),
+        0x27 => Some(124),
+        0x28 => Some(125),
+        0x2C => Some(43),
+        0x2E => Some(47),
+        0x2F => Some(44),
+        0x2D => Some(117),
+        0xA0 => Some(56),
+        0xA1 => Some(60),
+        0xA2 => Some(59),
+        0xA3 => Some(62),
+        0xA4 => Some(58),
+        0xA5 => Some(61),
+        0x5B | 0x5C => Some(55),
+        0xC0 => Some(50),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_mouse_group_from_message(message: u32) -> u8 {
+    use winapi::um::winuser::{
+        WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+        WM_RBUTTONDOWN, WM_XBUTTONDOWN,
+    };
+
+    match message {
+        WM_LBUTTONDOWN => MOUSE_GROUP_LEFT,
+        WM_RBUTTONDOWN => MOUSE_GROUP_RIGHT,
+        WM_MBUTTONDOWN | WM_XBUTTONDOWN => MOUSE_GROUP_SIDE,
+        WM_MOUSEMOVE | WM_MOUSEWHEEL | WM_MOUSEHWHEEL => MOUSE_GROUP_MOVE,
+        _ => MOUSE_GROUP_MOVE,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn cursor_ratio_from_virtual_screen(point_x: i32, point_y: i32) -> (f64, f64) {
+    use winapi::um::winuser::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
+
+    let min_x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    let min_y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) }.max(1) as f64;
+    let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) }.max(1) as f64;
+    let x_ratio = ((point_x - min_x) as f64 / width).clamp(0.0, 1.0);
+    let y_ratio = ((point_y - min_y) as f64 / height).clamp(0.0, 1.0);
+
+    (x_ratio, y_ratio)
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn windows_keyboard_hook_proc(
+    code: i32,
+    w_param: usize,
+    l_param: isize,
+) -> isize {
+    use std::ptr;
+    use winapi::um::winuser::{CallNextHookEx, KBDLLHOOKSTRUCT, WM_KEYDOWN, WM_SYSKEYDOWN};
+
+    if code >= 0 && (w_param as u32 == WM_KEYDOWN || w_param as u32 == WM_SYSKEYDOWN) {
+        let keyboard_info = &*(l_param as *const KBDLLHOOKSTRUCT);
+        if let Some(key_code) = windows_virtual_key_to_avatar_key_code(keyboard_info.vkCode) {
+            record_keyboard_input(standard_keyboard_group_from_key_code(key_code), key_code);
+        }
+    }
+
+    CallNextHookEx(ptr::null_mut(), code, w_param, l_param)
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn windows_mouse_hook_proc(
+    code: i32,
+    w_param: usize,
+    l_param: isize,
+) -> isize {
+    use std::ptr;
+    use winapi::shared::windef::POINT;
+    use winapi::um::winuser::{
+        CallNextHookEx, GetCursorPos, MSLLHOOKSTRUCT, WM_LBUTTONDOWN, WM_MBUTTONDOWN,
+        WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_XBUTTONDOWN,
+    };
+
+    let message = w_param as u32;
+    let tracked_message = matches!(
+        message,
+        WM_MOUSEMOVE
+            | WM_MOUSEWHEEL
+            | WM_MOUSEHWHEEL
+            | WM_LBUTTONDOWN
+            | WM_RBUTTONDOWN
+            | WM_MBUTTONDOWN
+            | WM_XBUTTONDOWN
+    );
+
+    if code >= 0 && tracked_message {
+        let mouse_info = &*(l_param as *const MSLLHOOKSTRUCT);
+        record_mouse_input(windows_mouse_group_from_message(message));
+        let mut point = POINT {
+            x: mouse_info.pt.x,
+            y: mouse_info.pt.y,
+        };
+        if GetCursorPos(&mut point) == 0 {
+            point = mouse_info.pt;
+        }
+        let (cursor_ratio_x, cursor_ratio_y) = cursor_ratio_from_virtual_screen(point.x, point.y);
+        record_cursor_ratio(cursor_ratio_x, cursor_ratio_y);
+    }
+
+    CallNextHookEx(ptr::null_mut(), code, w_param, l_param)
+}
+
 pub(crate) fn build_avatar_input_payload(now_ms: u64) -> AvatarInputPayload {
     let last_keyboard_input_at_ms = LAST_KEYBOARD_INPUT_AT_MS.load(Ordering::Relaxed);
     let last_mouse_input_at_ms = LAST_MOUSE_INPUT_AT_MS.load(Ordering::Relaxed);
@@ -377,7 +536,68 @@ pub fn start_avatar_input_monitor(app: &AppHandle) {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub fn start_avatar_input_monitor(_app: &AppHandle) {
+    use std::{mem, ptr, thread};
+    use winapi::um::libloaderapi::GetModuleHandleW;
+    use winapi::um::winuser::{
+        DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
+        MSG, WH_KEYBOARD_LL, WH_MOUSE_LL,
+    };
+
+    if INPUT_MONITOR_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    thread::spawn(|| unsafe {
+        let module_handle = GetModuleHandleW(ptr::null());
+        let keyboard_hook = SetWindowsHookExW(
+            WH_KEYBOARD_LL,
+            Some(windows_keyboard_hook_proc),
+            module_handle,
+            0,
+        );
+        let mouse_hook = SetWindowsHookExW(
+            WH_MOUSE_LL,
+            Some(windows_mouse_hook_proc),
+            module_handle,
+            0,
+        );
+
+        if keyboard_hook.is_null() || mouse_hook.is_null() {
+            if !keyboard_hook.is_null() {
+                UnhookWindowsHookEx(keyboard_hook);
+            }
+            if !mouse_hook.is_null() {
+                UnhookWindowsHookEx(mouse_hook);
+            }
+            INPUT_MONITOR_STARTED.store(false, Ordering::SeqCst);
+            log::warn!("桌宠输入联动注册失败：Windows 低级键鼠 Hook 初始化失败");
+            return;
+        }
+
+        let mut message: MSG = mem::zeroed();
+        loop {
+            let result = GetMessageW(&mut message, ptr::null_mut(), 0, 0);
+            if result == -1 {
+                log::warn!("桌宠输入联动消息循环异常退出：Windows 消息泵返回错误");
+                break;
+            }
+            if result == 0 {
+                break;
+            }
+
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+
+        UnhookWindowsHookEx(keyboard_hook);
+        UnhookWindowsHookEx(mouse_hook);
+        INPUT_MONITOR_STARTED.store(false, Ordering::SeqCst);
+    });
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn start_avatar_input_monitor(_app: &AppHandle) {}
 
 #[cfg(test)]
@@ -456,5 +676,31 @@ mod tests {
         assert_eq!(mouse_group_label(MOUSE_GROUP_LEFT), "mouse-left");
         assert_eq!(mouse_group_label(MOUSE_GROUP_RIGHT), "mouse-right");
         assert_eq!(mouse_group_label(MOUSE_GROUP_SIDE), "mouse-side");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows虚拟键应映射到桌宠可消费的统一键码() {
+        assert_eq!(windows_virtual_key_to_avatar_key_code(0x41), Some(0));
+        assert_eq!(windows_virtual_key_to_avatar_key_code(0x53), Some(1));
+        assert_eq!(windows_virtual_key_to_avatar_key_code(0x44), Some(2));
+        assert_eq!(windows_virtual_key_to_avatar_key_code(0x57), Some(13));
+        assert_eq!(windows_virtual_key_to_avatar_key_code(0x20), Some(49));
+        assert_eq!(windows_virtual_key_to_avatar_key_code(0x25), Some(123));
+        assert_eq!(windows_virtual_key_to_avatar_key_code(0x70), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows鼠标消息应映射到桌宠鼠标分组() {
+        use winapi::um::winuser::{
+            WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_XBUTTONDOWN,
+        };
+
+        assert_eq!(windows_mouse_group_from_message(WM_MOUSEMOVE), MOUSE_GROUP_MOVE);
+        assert_eq!(windows_mouse_group_from_message(WM_LBUTTONDOWN), MOUSE_GROUP_LEFT);
+        assert_eq!(windows_mouse_group_from_message(WM_RBUTTONDOWN), MOUSE_GROUP_RIGHT);
+        assert_eq!(windows_mouse_group_from_message(WM_MBUTTONDOWN), MOUSE_GROUP_SIDE);
+        assert_eq!(windows_mouse_group_from_message(WM_XBUTTONDOWN), MOUSE_GROUP_SIDE);
     }
 }

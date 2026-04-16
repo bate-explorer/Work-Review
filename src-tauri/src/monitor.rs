@@ -116,6 +116,8 @@ pub struct ActiveWindow {
     pub executable_path: Option<String>,
     /// 当前窗口的全局坐标和尺寸，用于多屏幕选屏截图
     pub window_bounds: Option<WindowBounds>,
+    /// 当前前台窗口是否已最小化（Windows “显示桌面”时最后一个窗口仍可能保持前台）
+    pub is_minimized: bool,
 }
 
 /// 判断进程名是否属于系统/桌面 shell 进程（不应记录使用时长）
@@ -884,7 +886,7 @@ fn get_active_window_with_options(include_browser_url: bool) -> Result<ActiveWin
     use winapi::um::psapi::GetModuleBaseNameW;
     use winapi::um::winnt::PROCESS_QUERY_INFORMATION;
     use winapi::um::winuser::{
-        GetForegroundWindow, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+        GetForegroundWindow, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
     };
     // PROCESS_QUERY_LIMITED_INFORMATION 是 Vista+ 专为低权限场景设计的标志
     // 无需 PROCESS_VM_READ，对 UAC 保护进程、Store 应用等成功率远高于完整权限
@@ -996,6 +998,7 @@ fn get_active_window_with_options(include_browser_url: bool) -> Result<ActiveWin
         };
 
         let app_name = normalize_display_app_name(&raw_app_name);
+        let is_minimized = IsIconic(hwnd) != 0;
 
         // 尝试获取浏览器 URL (Windows)
         let browser_url = if include_browser_url {
@@ -1035,6 +1038,7 @@ fn get_active_window_with_options(include_browser_url: bool) -> Result<ActiveWin
             browser_url,
             executable_path,
             window_bounds,
+            is_minimized,
         })
     }
 }
@@ -1983,6 +1987,7 @@ fn get_active_window_with_options(include_browser_url: bool) -> Result<ActiveWin
             browser_url,
             executable_path: app_path.map(str::to_string),
             window_bounds,
+            is_minimized: false,
         })
     } else {
         Err(AppError::Screenshot("获取活动窗口失败".to_string()))
@@ -3339,6 +3344,7 @@ fn build_linux_wayland_active_window(
         browser_url,
         executable_path,
         window_bounds,
+        is_minimized: false,
     })
 }
 
@@ -3441,6 +3447,7 @@ fn parse_gnome_focused_window_dbus_output(output: &str) -> Result<ActiveWindow> 
         browser_url: None,
         executable_path,
         window_bounds,
+        is_minimized: false,
     })
 }
 
@@ -3614,6 +3621,7 @@ pub fn get_active_window_fast() -> Result<ActiveWindow> {
         browser_url: None,
         executable_path: None,
         window_bounds: None,
+        is_minimized: false,
     })
 }
 
@@ -3810,6 +3818,7 @@ pub fn get_overlay_windows(frontmost_app: &str) -> Vec<ActiveWindow> {
                 browser_url: None,
                 executable_path: None,
                 window_bounds: None,
+                is_minimized: false,
             });
         }
 
@@ -3909,6 +3918,7 @@ pub fn get_visible_windows() -> Result<Vec<ActiveWindow>> {
                     browser_url,
                     executable_path: None,
                     window_bounds: None,
+                    is_minimized: false,
                 }
             })
             .collect();

@@ -371,8 +371,17 @@ fn launch_args_contain_autostart(args: &[String]) -> bool {
     args.iter().any(|arg| arg == AUTOSTART_LAUNCH_ARG)
 }
 
+fn launch_args_request_hidden_window(args: &[String]) -> bool {
+    launch_args_contain_autostart(args)
+        || args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "--hidden" | "--minimized"))
+}
+
 fn should_hide_main_window_on_setup(config: &AppConfig, launch_args: &[String]) -> bool {
-    config.auto_start && config.auto_start_silent && launch_args_contain_autostart(launch_args)
+    config.auto_start
+        && config.auto_start_silent
+        && launch_args_request_hidden_window(launch_args)
 }
 
 fn should_request_screen_capture_permission(
@@ -1143,6 +1152,7 @@ fn should_skip_transient_window(active_window: &monitor::ActiveWindow) -> bool {
 
 fn should_skip_system_window(active_window: &monitor::ActiveWindow) -> bool {
     let is_sys = monitor::is_system_process(&active_window.app_name);
+    let is_minimized_window = active_window.is_minimized;
     let is_explorer_shell = {
         let name_lower = active_window.app_name.to_lowercase();
         let name_trimmed = name_lower.trim_end_matches(".exe");
@@ -1153,7 +1163,7 @@ fn should_skip_system_window(active_window: &monitor::ActiveWindow) -> bool {
     // 需要结合标题与可执行路径一起兜底过滤。
     let is_windows_system_dialog = is_windows_system_dialog(active_window);
 
-    is_sys || is_explorer_shell || is_windows_system_dialog
+    is_sys || is_minimized_window || is_explorer_shell || is_windows_system_dialog
 }
 
 async fn background_avatar_task(state: Arc<Mutex<AppState>>, app: AppHandle) {
@@ -1467,6 +1477,10 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
         {
             if should_skip_transient_window(&active_window) {
                 log::debug!("跳过系统瞬态进程: {}", active_window.app_name);
+                last_app_name = None;
+                last_app_window_title = None;
+                last_browser_url = None;
+                last_capture_time = std::time::Instant::now();
                 continue;
             }
         }
@@ -1476,10 +1490,15 @@ async fn background_screenshot_task(state: Arc<Mutex<AppState>>, app: AppHandle)
         {
             if should_skip_system_window(&active_window) {
                 log::debug!(
-                    "跳过系统进程: {} (title={})",
+                    "跳过系统/桌面窗口: {} (title={}, minimized={})",
                     active_window.app_name,
-                    active_window.window_title
+                    active_window.window_title,
+                    active_window.is_minimized
                 );
+                last_app_name = None;
+                last_app_window_title = None;
+                last_browser_url = None;
+                last_capture_time = std::time::Instant::now();
                 continue;
             }
         }
@@ -2708,7 +2727,7 @@ async fn main() {
     #[cfg(not(windows))]
     let builder = builder.plugin(tauri_plugin_autostart::init(
         tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-        Some(vec![AUTOSTART_LAUNCH_ARG]),
+        Some(vec![AUTOSTART_LAUNCH_ARG, "--hidden"]),
     ));
     builder
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
@@ -2765,6 +2784,11 @@ async fn main() {
             let state = app.state::<Arc<Mutex<AppState>>>();
             let should_hide_main_window = {
                 let state_guard = state.inner().lock().unwrap_or_else(|e| e.into_inner());
+                if state_guard.config.auto_start {
+                    if let Err(e) = autostart::enable_autostart(app.handle().clone()) {
+                        log::warn!("同步修复开机自启注册项失败: {e}");
+                    }
+                }
                 let result = should_hide_main_window_on_setup(&state_guard.config, &launch_args);
                 log::info!(
                     "启动窗口决策: show={} | auto_start={} auto_start_silent={} args={:?}",
@@ -3317,6 +3341,7 @@ mod tests {
             browser_url: None,
             executable_path: None,
             window_bounds: None,
+            is_minimized: false,
         };
 
         let reused = reusable_cached_active_window(Some(&(now, cached_window.clone())), now);
@@ -3336,6 +3361,7 @@ mod tests {
             browser_url: None,
             executable_path: None,
             window_bounds: None,
+            is_minimized: false,
         };
         let stale_at = now
             .checked_sub(Duration::from_millis(1500))
@@ -3468,6 +3494,14 @@ mod tests {
             &config,
             &["work-review".to_string()]
         ));
+        assert!(should_hide_main_window_on_setup(
+            &config,
+            &["work-review".to_string(), "--hidden".to_string()]
+        ));
+        assert!(should_hide_main_window_on_setup(
+            &config,
+            &["work-review".to_string(), "--minimized".to_string()]
+        ));
     }
 
     #[test]
@@ -3490,6 +3524,7 @@ mod tests {
             browser_url: None,
             executable_path: None,
             window_bounds: None,
+            is_minimized: false,
         };
 
         assert!(should_skip_system_window(&active_window));
@@ -3503,6 +3538,7 @@ mod tests {
             browser_url: None,
             executable_path: Some(r"C:\Windows\System32\consent.exe".to_string()),
             window_bounds: None,
+            is_minimized: false,
         };
 
         assert!(should_skip_system_window(&active_window));
@@ -3516,6 +3552,21 @@ mod tests {
             browser_url: None,
             executable_path: None,
             window_bounds: None,
+            is_minimized: false,
+        };
+
+        assert!(should_skip_system_window(&active_window));
+    }
+
+    #[test]
+    fn windows最小化前台窗口应视为非工作窗口() {
+        let active_window = ActiveWindow {
+            app_name: "WeChat".to_string(),
+            window_title: "微信".to_string(),
+            browser_url: None,
+            executable_path: None,
+            window_bounds: None,
+            is_minimized: true,
         };
 
         assert!(should_skip_system_window(&active_window));
@@ -3529,6 +3580,7 @@ mod tests {
             browser_url: None,
             executable_path: None,
             window_bounds: None,
+            is_minimized: false,
         };
 
         assert!(!should_skip_system_window(&active_window));

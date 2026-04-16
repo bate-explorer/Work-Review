@@ -121,6 +121,74 @@
     return { armPoints, mouseX, mouseY };
   }
 
+  function getMousePointerIndicatorTone(mouseGroup) {
+    switch (mouseGroup) {
+      case 'mouse-left':
+        return {
+          pawFill: 'rgba(255, 255, 255, 0.96)',
+          pawStroke: 'rgba(15, 23, 42, 0.86)',
+          padFill: 'rgba(244, 114, 182, 0.72)',
+        };
+      case 'mouse-right':
+        return {
+          pawFill: 'rgba(255, 255, 255, 0.96)',
+          pawStroke: 'rgba(15, 23, 42, 0.86)',
+          padFill: 'rgba(250, 204, 21, 0.72)',
+        };
+      case 'mouse-side':
+        return {
+          pawFill: 'rgba(255, 255, 255, 0.96)',
+          pawStroke: 'rgba(15, 23, 42, 0.86)',
+          padFill: 'rgba(148, 163, 184, 0.72)',
+        };
+      default:
+        return {
+          pawFill: 'rgba(255, 255, 255, 0.96)',
+          pawStroke: 'rgba(15, 23, 42, 0.86)',
+          padFill: 'rgba(34, 211, 238, 0.72)',
+        };
+    }
+  }
+
+  function computeStaticSceneMouseGeometry(mouseMotionModel, cursorRatioX = 0.5, cursorRatioY = 0.5) {
+    if (!mouseMotionModel?.bounds) {
+      return null;
+    }
+
+    const ratioX = clamp01(cursorRatioX);
+    const ratioY = clamp01(cursorRatioY);
+    const { anchorX, anchorY, bounds, bend = 0.24 } = mouseMotionModel;
+    const targetX = bounds.x + bounds.width * ratioX;
+    const targetY = bounds.y + bounds.height * ratioY;
+    const dx = targetX - anchorX;
+    const dy = targetY - anchorY;
+    const distance = Math.hypot(dx, dy) || 1;
+    const normalX = -dy / distance;
+    const normalY = dx / distance;
+    const controlX = anchorX + dx * 0.5 + normalX * distance * bend;
+    const controlY = anchorY + dy * 0.5 + normalY * distance * bend;
+    const samples = 18;
+    const points = [];
+
+    for (let index = 0; index <= samples; index += 1) {
+      const t = index / samples;
+      const inv = 1 - t;
+      points.push({
+        x: inv * inv * anchorX + 2 * inv * t * controlX + t * t * targetX,
+        y: inv * inv * anchorY + 2 * inv * t * controlY + t * t * targetY,
+      });
+    }
+
+    const pawAngle = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+    return {
+      armPoints: points.map((point) => `${point.x},${point.y}`).join(' '),
+      pawX: targetX,
+      pawY: targetY,
+      pawAngle,
+    };
+  }
+
   function getStaticCoverTransform(
     presetId,
     keyboardActive,
@@ -287,6 +355,7 @@
   $: keyboardVisualClip = preset.keyboardVisualClip ?? null;
   $: keyboardVisualClipId = keyboardVisualClip ? `${clipIdBase}-keyboard-visual` : '';
   $: keyboardVisualClipUrl = keyboardVisualClipId ? `url(#${keyboardVisualClipId})` : '';
+  $: keyboardHotspotsAboveCover = !!preset.keyboardHotspotsAboveCover;
   $: leftHandSrc = keyboardActive
     ? preset.leftHandFrames?.[keyboardVisualKey] ?? preset.idleLeftHand ?? null
     : preset.idleLeftHand ?? null;
@@ -302,17 +371,24 @@
   $: mouseVisualClip = preset.mouseVisualClip ?? null;
   $: mouseVisualClipId = mouseVisualClip ? `${clipIdBase}-mouse-visual` : '';
   $: mouseVisualClipUrl = mouseVisualClipId ? `url(#${mouseVisualClipId})` : '';
+  $: staticSceneMouseGeometry = mouseActive && preset.mouseMotionModel
+    ? computeStaticSceneMouseGeometry(preset.mouseMotionModel, cursorRatioX, cursorRatioY)
+    : null;
+  $: mousePointerIndicatorTone = getMousePointerIndicatorTone(mouseGroup);
   $: mouseHotspotsAboveCover = !!preset.mouseHotspotsAboveCover;
   $: mouseGeometry = computeStandardMouseGeometry(cursorRatioX, cursorRatioY);
-  $: mouseArmPoints = mouseGeometry.armPoints.map((point) => `${point.x},${point.y}`).join(' ');
+  $: mouseArmPoints = staticSceneMouseGeometry?.armPoints
+    ?? mouseGeometry.armPoints.map((point) => `${point.x},${point.y}`).join(' ');
   $: mouseDeviceX = mouseGeometry.mouseX;
   $: mouseDeviceY = mouseGeometry.mouseY;
-  $: keyboardHotspots = keyboardActive && sceneInteractionLayout && !keyboardVisualSrc
+  $: keyboardHotspots = keyboardActive && sceneInteractionLayout
     ? sceneInteractionLayout.keyboardHotspots?.[keyboardGroup] ?? []
     : [];
-  $: mouseHotspots = mouseActive && sceneInteractionLayout && !mouseVisualSrc
+  $: mouseHotspots = mouseActive && sceneInteractionLayout && !mouseVisualSrc && !preset.mouseMotionModel
     ? sceneInteractionLayout.mouseHotspots?.[mouseGroup] ?? []
     : [];
+  $: preCoverKeyboardHotspots = keyboardHotspotsAboveCover ? [] : keyboardHotspots;
+  $: postCoverKeyboardHotspots = keyboardHotspotsAboveCover ? keyboardHotspots : [];
   $: preCoverMouseHotspots = mouseHotspotsAboveCover ? [] : mouseHotspots;
   $: postCoverMouseHotspots = mouseHotspotsAboveCover ? mouseHotspots : [];
   $: keyboardOverlayStyle = `opacity:${preset.keyboardOverlayOpacity ?? 1};`;
@@ -406,9 +482,9 @@
         <g transform={contentTransform}>
           <image href={sceneSrc} x="0" y="0" width={SCENE_WIDTH} height={SCENE_HEIGHT} />
 
-          {#if keyboardHotspots.length || preCoverMouseHotspots.length}
+          {#if preCoverKeyboardHotspots.length || preCoverMouseHotspots.length}
             <g class="scene-interaction-layer">
-              {#each keyboardHotspots as hotspot}
+              {#each preCoverKeyboardHotspots as hotspot}
                 {#if hotspot.kind === 'rect'}
                   <rect
                     class="scene-hotspot"
@@ -496,6 +572,50 @@
             />
           {/if}
 
+          {#if postCoverKeyboardHotspots.length}
+            <g
+              class="scene-interaction-layer post-cover-keyboard-hotspot-layer"
+              clip-path={keyboardVisualClipUrl || undefined}
+            >
+              {#each postCoverKeyboardHotspots as hotspot}
+                {#if hotspot.kind === 'rect'}
+                  <rect
+                    class="scene-hotspot scene-hotspot-keyboard"
+                    x={hotspot.x}
+                    y={hotspot.y}
+                    width={hotspot.width}
+                    height={hotspot.height}
+                    rx={hotspot.rx ?? 5}
+                    fill={hotspot.fill}
+                    stroke={hotspot.stroke}
+                    stroke-width="1.8"
+                    transform={hotspot.transform || undefined}
+                  />
+                {:else if hotspot.kind === 'ellipse'}
+                  <ellipse
+                    class="scene-hotspot scene-hotspot-keyboard"
+                    cx={hotspot.cx}
+                    cy={hotspot.cy}
+                    rx={hotspot.rx}
+                    ry={hotspot.ry}
+                    fill={hotspot.fill}
+                    stroke={hotspot.stroke}
+                    stroke-width="1.8"
+                  />
+                {:else if hotspot.kind === 'polygon'}
+                  <polygon
+                    class="scene-hotspot scene-hotspot-keyboard"
+                    points={hotspot.points}
+                    fill={hotspot.fill}
+                    stroke={hotspot.stroke}
+                    stroke-width="1.8"
+                    stroke-linejoin="round"
+                  />
+                {/if}
+              {/each}
+            </g>
+          {/if}
+
           {#if postCoverMouseHotspots.length}
             <g
               class="scene-interaction-layer post-cover-mouse-hotspot-layer"
@@ -562,6 +682,33 @@
               class="scene-visual-layer mouse-visual-layer"
               clip-path={mouseVisualClipUrl || undefined}
             />
+          {/if}
+
+          {#if staticSceneMouseGeometry}
+            <g
+              class="scene-mouse-paw"
+              clip-path={mouseVisualClipUrl || undefined}
+              transform={`translate(${staticSceneMouseGeometry.pawX} ${staticSceneMouseGeometry.pawY}) rotate(${staticSceneMouseGeometry.pawAngle})`}
+            >
+              <ellipse
+                cx="0"
+                cy="6"
+                rx="11"
+                ry="9"
+                fill={mousePointerIndicatorTone.pawFill}
+                stroke={mousePointerIndicatorTone.pawStroke}
+                stroke-width="2"
+              />
+              <circle cx="-8" cy="-4" r="3.6" fill={mousePointerIndicatorTone.pawFill} stroke={mousePointerIndicatorTone.pawStroke} stroke-width="1.6" />
+              <circle cx="-2.5" cy="-8" r="3.4" fill={mousePointerIndicatorTone.pawFill} stroke={mousePointerIndicatorTone.pawStroke} stroke-width="1.6" />
+              <circle cx="3.5" cy="-8" r="3.4" fill={mousePointerIndicatorTone.pawFill} stroke={mousePointerIndicatorTone.pawStroke} stroke-width="1.6" />
+              <circle cx="9" cy="-4" r="3.6" fill={mousePointerIndicatorTone.pawFill} stroke={mousePointerIndicatorTone.pawStroke} stroke-width="1.6" />
+              <ellipse cx="0" cy="7" rx="5.5" ry="4.4" fill={mousePointerIndicatorTone.padFill} />
+              <circle cx="-7.6" cy="-4.2" r="1.35" fill={mousePointerIndicatorTone.padFill} />
+              <circle cx="-2.4" cy="-7.9" r="1.25" fill={mousePointerIndicatorTone.padFill} />
+              <circle cx="3.4" cy="-7.9" r="1.25" fill={mousePointerIndicatorTone.padFill} />
+              <circle cx="8.8" cy="-4.2" r="1.35" fill={mousePointerIndicatorTone.padFill} />
+            </g>
           {/if}
 
           {#if useSourceKeyboardMode && leftHandSrc}
@@ -711,6 +858,14 @@
 
   .scene-hotspot-mouse {
     filter: drop-shadow(0 2px 8px rgba(236, 72, 153, 0.16));
+  }
+
+  .scene-hotspot-keyboard {
+    filter: drop-shadow(0 2px 8px rgba(34, 211, 238, 0.22));
+  }
+
+  .scene-mouse-paw {
+    filter: drop-shadow(0 2px 10px rgba(15, 23, 42, 0.2));
   }
 
   .keyboard-layer {
