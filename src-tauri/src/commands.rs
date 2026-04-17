@@ -154,6 +154,7 @@ pub struct LinuxSessionSupportInfo {
     pub avatar_mouse_supported: bool,
     pub gnome_avatar_extension_installed: bool,
     pub gnome_avatar_extension_enabled: bool,
+    pub gnome_avatar_extension_needs_relogin: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -161,6 +162,7 @@ pub struct LinuxSessionSupportInfo {
 pub struct GnomeAvatarExtensionInstallResult {
     pub installed: bool,
     pub enabled: bool,
+    pub requires_relogin: bool,
     pub extension_dir: String,
     pub message: String,
 }
@@ -283,6 +285,19 @@ fn is_gnome_avatar_extension_enabled() -> bool {
                 .any(|line| line.trim() == GNOME_AVATAR_EXTENSION_UUID)
         })
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn gnome_avatar_extension_needs_relogin(
+    desktop_environment: crate::linux_session::LinuxDesktopEnvironment,
+    installed: bool,
+    enabled: bool,
+    avatar_input_support: &crate::avatar_input::LinuxAvatarInputSupport,
+) -> bool {
+    desktop_environment == crate::linux_session::LinuxDesktopEnvironment::Gnome
+        && installed
+        && enabled
+        && avatar_input_support.provider != "gnome-shell-dbus"
 }
 
 fn build_versioned_updater_endpoint(endpoint: &str, version: &str) -> Option<String> {
@@ -4209,6 +4224,12 @@ pub async fn get_linux_session_support() -> Result<LinuxSessionSupportInfo, AppE
         let gnome_avatar_extension_enabled = desktop_environment
             == crate::linux_session::LinuxDesktopEnvironment::Gnome
             && is_gnome_avatar_extension_enabled();
+        let gnome_avatar_extension_needs_relogin = gnome_avatar_extension_needs_relogin(
+            desktop_environment,
+            gnome_avatar_extension_installed,
+            gnome_avatar_extension_enabled,
+            &avatar_input_support,
+        );
         let active_window_supported = active_window_provider.is_some();
         let browser_url_support_level = if active_window_supported {
             "mixed"
@@ -4230,6 +4251,7 @@ pub async fn get_linux_session_support() -> Result<LinuxSessionSupportInfo, AppE
             avatar_mouse_supported: avatar_input_support.mouse_supported,
             gnome_avatar_extension_installed,
             gnome_avatar_extension_enabled,
+            gnome_avatar_extension_needs_relogin,
         });
     }
 
@@ -4249,6 +4271,7 @@ pub async fn get_linux_session_support() -> Result<LinuxSessionSupportInfo, AppE
             avatar_mouse_supported: false,
             gnome_avatar_extension_installed: false,
             gnome_avatar_extension_enabled: false,
+            gnome_avatar_extension_needs_relogin: false,
         })
     }
 }
@@ -4288,8 +4311,18 @@ pub async fn install_gnome_avatar_extension() -> Result<GnomeAvatarExtensionInst
             .filter(|output| output.status.success())
             .is_some()
             || is_gnome_avatar_extension_enabled();
+        let avatar_input_support = crate::avatar_input::current_linux_avatar_input_support();
+        let requires_relogin = gnome_avatar_extension_needs_relogin(
+            desktop_environment,
+            true,
+            enabled,
+            &avatar_input_support,
+        );
 
-        let message = if enabled {
+        let message = if requires_relogin {
+            "GNOME 桌宠扩展已启用，但当前 GNOME Shell 还未加载最新扩展。请重新登录后再试。"
+                .to_string()
+        } else if enabled {
             format!(
                 "GNOME 桌宠扩展已安装并启用（{} / {}）",
                 session.as_str(),
@@ -4302,6 +4335,7 @@ pub async fn install_gnome_avatar_extension() -> Result<GnomeAvatarExtensionInst
         return Ok(GnomeAvatarExtensionInstallResult {
             installed: true,
             enabled,
+            requires_relogin,
             extension_dir: install_dir.to_string_lossy().to_string(),
             message,
         });

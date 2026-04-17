@@ -71,6 +71,9 @@
   $: showGnomeExtensionInstaller = runtimePlatform === 'linux'
     && linuxSessionSupport?.desktopEnvironment === 'gnome'
     && !linuxSessionSupport?.gnomeAvatarExtensionEnabled;
+  $: showGnomeExtensionRelogin = runtimePlatform === 'linux'
+    && linuxSessionSupport?.desktopEnvironment === 'gnome'
+    && linuxSessionSupport?.gnomeAvatarExtensionNeedsRelogin;
 
   async function refreshLinuxSessionSupport() {
     runtimePlatform = await invoke('get_runtime_platform');
@@ -298,7 +301,10 @@
     gnomeExtensionInstalling = true;
     try {
       const result = await invoke('install_gnome_avatar_extension');
-      showToast(result.message, result.enabled ? 'success' : 'info');
+      showToast(
+        result.message,
+        result.requiresRelogin ? 'warning' : result.enabled ? 'success' : 'info'
+      );
       await refreshLinuxSessionSupport();
     } catch (e) {
       console.error('自动安装 GNOME 桌宠扩展失败:', e);
@@ -368,13 +374,21 @@
           <div class="mt-3 flex items-center justify-between gap-3 text-sm">
             <div class="settings-subtle">{t('settingsAppearance.avatarGnomeExtensionTitle')}</div>
             <div class="font-semibold text-slate-700 dark:text-slate-200">
-              {linuxSessionSupport.gnomeAvatarExtensionEnabled
+              {linuxSessionSupport.gnomeAvatarExtensionNeedsRelogin
+                ? t('settingsAppearance.avatarGnomeExtensionRelogin')
+                : linuxSessionSupport.gnomeAvatarExtensionEnabled
                 ? t('settingsAppearance.avatarGnomeExtensionReady')
                 : linuxSessionSupport.gnomeAvatarExtensionInstalled
                   ? t('settingsAppearance.avatarGnomeExtensionInstalled')
                   : t('settingsAppearance.avatarGnomeExtensionMissing')}
             </div>
           </div>
+
+          {#if showGnomeExtensionRelogin}
+            <div class="mt-2 text-[12px] text-amber-700 dark:text-amber-300">
+              {t('settingsAppearance.avatarGnomeExtensionReloginHint')}
+            </div>
+          {/if}
 
           {#if showGnomeExtensionInstaller}
             <div class="mt-3 flex items-center justify-between gap-3">
