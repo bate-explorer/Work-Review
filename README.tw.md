@@ -187,7 +187,7 @@ Wayland 常見 provider / 工具：
 ```bash
 # GNOME
 gdbus
-# 桌寵滑鼠聯動還需要安裝倉庫內 GNOME Shell 擴充：
+# 桌寵鍵鼠聯動還需要安裝倉庫內 GNOME Shell 擴充：
 # scripts/gnome-shell/work-review-avatar-input@workreview.app
 
 # KDE Plasma

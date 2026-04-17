@@ -221,6 +221,8 @@ struct LinuxWaylandMouseSnapshot {
     x: i32,
     y: i32,
     group_code: u8,
+    keyboard_key_code: Option<u16>,
+    keyboard_timestamp_ms: Option<u64>,
 }
 
 fn linux_avatar_input_support_for_session(
@@ -236,7 +238,7 @@ fn linux_avatar_input_support_for_session(
         LinuxDesktopSession::X11 => LinuxAvatarInputSupport::full("xinput2"),
         LinuxDesktopSession::Wayland => match desktop_environment {
             LinuxDesktopEnvironment::Gnome if gnome_mouse_provider_available => {
-                LinuxAvatarInputSupport::mouse_only("gnome-shell-dbus")
+                LinuxAvatarInputSupport::full("gnome-shell-dbus")
             }
             LinuxDesktopEnvironment::Kde if kde_mouse_provider_available => {
                 LinuxAvatarInputSupport::mouse_only("kdotool-mouselocation")
@@ -245,7 +247,7 @@ fn linux_avatar_input_support_for_session(
                 LinuxAvatarInputSupport::mouse_only("hyprctl-cursorpos")
             }
             LinuxDesktopEnvironment::Unknown if gnome_mouse_provider_available => {
-                LinuxAvatarInputSupport::mouse_only("gnome-shell-dbus")
+                LinuxAvatarInputSupport::full("gnome-shell-dbus")
             }
             LinuxDesktopEnvironment::Unknown if hyprland_mouse_provider_available => {
                 LinuxAvatarInputSupport::mouse_only("hyprctl-cursorpos")
@@ -355,8 +357,21 @@ fn parse_gnome_avatar_input_dbus_output(output: &str) -> Option<LinuxWaylandMous
         .and_then(|entry| entry.as_str())
         .map(mouse_group_code_from_label)
         .unwrap_or(MOUSE_GROUP_MOVE);
+    let keyboard_key_code = value
+        .get("keyval")
+        .and_then(|entry| entry.as_u64())
+        .and_then(linux_keysym_to_avatar_key_code);
+    let keyboard_timestamp_ms = value
+        .get("keyboardTimestampMs")
+        .and_then(|entry| entry.as_u64());
 
-    Some(LinuxWaylandMouseSnapshot { x, y, group_code })
+    Some(LinuxWaylandMouseSnapshot {
+        x,
+        y,
+        group_code,
+        keyboard_key_code,
+        keyboard_timestamp_ms,
+    })
 }
 
 fn parse_kdotool_mouse_location_output(output: &str) -> Option<(i32, i32)> {
@@ -459,9 +474,9 @@ fn is_gnome_wayland_mouse_provider_available() -> bool {
             "--object-path",
             "/org/gnome/shell/extensions/WorkReviewAvatarInput",
             "--method",
-            "org.gnome.shell.extensions.WorkReviewAvatarInput.GetPointer",
+            "org.gnome.shell.extensions.WorkReviewAvatarInput.GetInput",
         ]),
-        "gdbus WorkReviewAvatarInput.GetPointer",
+        "gdbus WorkReviewAvatarInput.GetInput",
     )
     .filter(|output| output.status.success())
     .and_then(|output| {
@@ -526,9 +541,9 @@ fn query_wayland_mouse_cursor_point(
                 "--object-path",
                 "/org/gnome/shell/extensions/WorkReviewAvatarInput",
                 "--method",
-                "org.gnome.shell.extensions.WorkReviewAvatarInput.GetPointer",
+                "org.gnome.shell.extensions.WorkReviewAvatarInput.GetInput",
             ]),
-            "gdbus WorkReviewAvatarInput.GetPointer",
+            "gdbus WorkReviewAvatarInput.GetInput",
         )
         .and_then(|output| {
             parse_gnome_avatar_input_dbus_output(&String::from_utf8_lossy(&output.stdout))
@@ -543,6 +558,8 @@ fn query_wayland_mouse_cursor_point(
                     x,
                     y,
                     group_code: MOUSE_GROUP_MOVE,
+                    keyboard_key_code: None,
+                    keyboard_timestamp_ms: None,
                 },
             )
         }),
@@ -556,6 +573,8 @@ fn query_wayland_mouse_cursor_point(
                     x,
                     y,
                     group_code: MOUSE_GROUP_MOVE,
+                    keyboard_key_code: None,
+                    keyboard_timestamp_ms: None,
                 },
             )
         }),
@@ -1240,26 +1259,35 @@ pub fn start_avatar_input_monitor(app: &AppHandle) {
 
             let app = app.clone();
             thread::spawn(move || {
-                let mut last_point = None;
+                let mut last_mouse_state: Option<(i32, i32, u8)> = None;
+                let mut last_keyboard_timestamp_ms: Option<u64> = None;
 
                 loop {
                     if let Some(snapshot) = query_wayland_mouse_cursor_point(provider) {
-                        if last_point != Some((snapshot.x, snapshot.y)) {
-                            last_point = Some((snapshot.x, snapshot.y));
+                        let next_mouse_state = (snapshot.x, snapshot.y, snapshot.group_code);
+                        if last_mouse_state != Some(next_mouse_state) {
+                            record_mouse_input(snapshot.group_code);
+                            last_mouse_state = Some(next_mouse_state);
                         }
-                        record_mouse_input(snapshot.group_code);
+
+                        if snapshot.keyboard_timestamp_ms != last_keyboard_timestamp_ms {
+                            if let Some(timestamp_ms) = snapshot.keyboard_timestamp_ms {
+                                if let Some(key_code) = snapshot.keyboard_key_code {
+                                    record_keyboard_input(
+                                        standard_keyboard_group_from_key_code(key_code),
+                                        key_code,
+                                    );
+                                }
+                                last_keyboard_timestamp_ms = Some(timestamp_ms);
+                            }
+                        }
 
                         if let Some((min_x, min_y, width, height)) =
                             virtual_desktop_bounds_from_monitors(&app)
                         {
                             let (cursor_ratio_x, cursor_ratio_y) =
                                 cursor_ratio_from_virtual_desktop_bounds(
-                                    snapshot.x,
-                                    snapshot.y,
-                                    min_x,
-                                    min_y,
-                                    width,
-                                    height,
+                                    snapshot.x, snapshot.y, min_x, min_y, width, height,
                                 );
                             record_cursor_ratio(cursor_ratio_x, cursor_ratio_y);
                         }
@@ -1480,7 +1508,7 @@ mod tests {
     }
 
     #[test]
-    fn gnome_wayland在扩展可用时应识别为仅鼠标联动() {
+    fn gnome_wayland在扩展可用时应识别为完整联动() {
         let support = linux_avatar_input_support_for_session(
             LinuxDesktopSession::Wayland,
             LinuxDesktopEnvironment::Gnome,
@@ -1489,21 +1517,23 @@ mod tests {
             false,
         );
 
-        assert_eq!(support.support_level, "mouse-only");
+        assert_eq!(support.support_level, "full");
         assert_eq!(support.provider, "gnome-shell-dbus");
-        assert!(!support.keyboard_supported);
+        assert!(support.keyboard_supported);
         assert!(support.mouse_supported);
     }
 
     #[test]
-    fn gnome_avatar_input_dbus输出应解析为坐标与鼠标分组() {
-        let output = "('{\"x\":1489,\"y\":812,\"mouseGroup\":\"mouse-right\"}',)";
+    fn gnome_avatar_input_dbus输出应解析坐标鼠标分组与最近按键() {
+        let output = "('{\"x\":1489,\"y\":812,\"mouseGroup\":\"mouse-right\",\"keyval\":113,\"keycode\":24,\"keyboardTimestampMs\":123456}','')";
         assert_eq!(
             parse_gnome_avatar_input_dbus_output(output),
             Some(LinuxWaylandMouseSnapshot {
                 x: 1489,
                 y: 812,
                 group_code: MOUSE_GROUP_RIGHT,
+                keyboard_key_code: Some(12),
+                keyboard_timestamp_ms: Some(123456),
             })
         );
     }
