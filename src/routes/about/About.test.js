@@ -10,7 +10,7 @@ test('关于页应提供赞助支持按钮并展示微信与支付宝收款码',
   assert.match(source, /text-rose-500/);
   assert.match(source, /about\.wechat/);
   assert.match(source, /about\.alipay/);
-  assert.match(source, /docs\/sponsorship\/vx\.png/);
+  assert.match(source, /docs\/group\/vx\.png/);
   assert.match(source, /docs\/sponsorship\/zfb\.png/);
 });
 
