@@ -11,7 +11,7 @@ rusqlite = { version = "0.30", features = ["bundled"] }
 regex = "1.10"
 anyhow = "1.0"
 thiserror = "1.0"
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
 reqwest = { version = "0.11", features = ["json", "socks"] }
 async-trait = "0.1"
 uuid = { version = "1.6", features = ["v4", "serde"] }

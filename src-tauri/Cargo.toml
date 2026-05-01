@@ -18,12 +18,11 @@ tauri = { version = "2.9", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-single-instance = { version = "2" }
 
 # 异步运行时
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "sync", "time", "net", "fs", "io-util"] }
 
 # 序列化
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
 
 # 数据库
 rusqlite = { version = "0.30", features = ["bundled"] }

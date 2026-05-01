@@ -6,12 +6,14 @@
   import { locale, t } from '$lib/i18n/index.js';
   import { runUpdateFlow } from '$lib/utils/updater.js';
 
-  const wechatSponsorshipQr = new URL('../../../docs/sponsorship/vx.png', import.meta.url).href;
+  const wechatSponsorshipQr = new URL('../../../docs/group/vx.png', import.meta.url).href;
   const alipaySponsorshipQr = new URL('../../../docs/sponsorship/zfb.png', import.meta.url).href;
+  const bmcQr = new URL('../../../docs/group/buycoffee.png', import.meta.url).href;
 
   let appVersion = '';
   let isCheckingUpdate = false;
   let isSponsorshipOpen = false;
+  let zoomedQr = null;
   let updateStatus = '';
   let updateStatusTimer = null;
   $: currentLocale = $locale;
@@ -191,26 +193,24 @@
       aria-modal="true"
       aria-labelledby="sponsorship-dialog-title"
     >
-      <div class="flex items-start justify-between gap-4">
-        <div class="min-w-0">
-          <div class="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold tracking-[0.14em] text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
-            {t('about.supportBadge')}
-          </div>
-          <h3 id="sponsorship-dialog-title" class="mt-3 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
-            {t('about.supportTitle')}
-          </h3>
-          <p class="mt-3 max-w-2xl text-sm leading-7 text-slate-600 dark:text-slate-300">
-            {t('about.supportCopy')}
-          </p>
-          <p class="text-sm leading-7 text-slate-500 dark:text-slate-400">
-            {t('about.supportCopy2')}
-          </p>
+      <div class="relative text-center">
+        <div class="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold tracking-[0.14em] text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+          {t('about.supportBadge')}
         </div>
+        <h3 id="sponsorship-dialog-title" class="mt-3 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
+          {t('about.supportTitle')}
+        </h3>
+        <p class="mt-3 text-sm leading-7 text-slate-600 dark:text-slate-300">
+          {t('about.supportCopy')}
+        </p>
+        <p class="text-sm leading-7 text-slate-500 dark:text-slate-400">
+          {t('about.supportCopy2')}
+        </p>
 
         <button
           type="button"
           on:click={closeSponsorshipModal}
-          class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+          class="absolute right-0 top-0 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
           aria-label={t('about.closeSupportDialog')}
         >
           <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -219,41 +219,63 @@
         </button>
       </div>
 
-      <div class="mt-6 grid gap-4 md:grid-cols-2">
+      <div class="mt-6 grid gap-4 grid-cols-3">
         <div class="rounded-[28px] border border-slate-200/80 bg-slate-50/80 p-4 dark:border-slate-700/80 dark:bg-slate-800/50">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center justify-center gap-2">
             <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7.5 7.5h9v9h-9z" />
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4.5 12h3m9 0h3M12 4.5v3m0 9v3" />
               </svg>
             </div>
-            <div>
-              <h4 class="text-base font-semibold text-slate-900 dark:text-white">{t('about.wechat')}</h4>
-            </div>
+            <h4 class="text-base font-semibold text-slate-900 dark:text-white">{t('about.wechat')}</h4>
           </div>
           <div class="mt-4 rounded-[24px] bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-slate-950">
-            <img src={wechatSponsorshipQr} alt={t('about.wechatQrAlt')} class="mx-auto aspect-square w-full max-w-[220px] rounded-2xl object-contain" />
+            <img src={wechatSponsorshipQr} alt={t('about.wechatQrAlt')} class="mx-auto aspect-square w-full cursor-zoom-in rounded-2xl object-contain transition-transform hover:scale-[1.02]" on:click={() => zoomedQr = wechatSponsorshipQr} />
           </div>
         </div>
 
         <div class="rounded-[28px] border border-slate-200/80 bg-slate-50/80 p-4 dark:border-slate-700/80 dark:bg-slate-800/50">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center justify-center gap-2">
             <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4.5 8.25h15M6.75 4.5h10.5A2.25 2.25 0 0 1 19.5 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 17.25V6.75A2.25 2.25 0 0 1 6.75 4.5Z" />
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.25 13.5h7.5" />
               </svg>
             </div>
-            <div>
-              <h4 class="text-base font-semibold text-slate-900 dark:text-white">{t('about.alipay')}</h4>
-            </div>
+            <h4 class="text-base font-semibold text-slate-900 dark:text-white">{t('about.alipay')}</h4>
           </div>
           <div class="mt-4 rounded-[24px] bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-slate-950">
-            <img src={alipaySponsorshipQr} alt={t('about.alipayQrAlt')} class="mx-auto aspect-square w-full max-w-[220px] rounded-2xl object-contain" />
+            <img src={alipaySponsorshipQr} alt={t('about.alipayQrAlt')} class="mx-auto aspect-square w-full cursor-zoom-in rounded-2xl object-contain transition-transform hover:scale-[1.02]" on:click={() => zoomedQr = alipaySponsorshipQr} />
+          </div>
+        </div>
+
+        <div class="rounded-[28px] border border-slate-200/80 bg-slate-50/80 p-4 dark:border-slate-700/80 dark:bg-slate-800/50">
+          <div class="flex items-center justify-center gap-2">
+            <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15.75 6.75a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 10.5v6.75" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9.75 13.5h4.5" />
+              </svg>
+            </div>
+            <h4 class="text-base font-semibold text-slate-900 dark:text-white">Buy Me a Coffee</h4>
+          </div>
+          <div class="mt-4 rounded-[24px] bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-slate-950">
+            <img src={bmcQr} alt="Buy Me a Coffee QR code" class="mx-auto aspect-square w-full cursor-zoom-in rounded-2xl object-contain transition-transform hover:scale-[1.02]" on:click={() => zoomedQr = bmcQr} />
           </div>
         </div>
       </div>
     </div>
+
+    {#if zoomedQr}
+      <div
+        class="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/70 backdrop-blur-sm animate-fadeIn"
+        on:click={() => zoomedQr = null}
+        on:keydown={(e) => e.key === 'Escape' && (zoomedQr = null)}
+      >
+        <img src={zoomedQr} alt="" class="max-h-[75vh] max-w-[75vw] cursor-zoom-out rounded-3xl shadow-2xl" />
+      </div>
+    {/if}
   </div>
 {/if}
