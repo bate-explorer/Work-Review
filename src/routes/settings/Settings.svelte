@@ -81,6 +81,9 @@
       if (typeof config.daily_report_auto_export !== 'boolean') {
         config.daily_report_auto_export = false;
       }
+      if (!Array.isArray(config.daily_report_prompt_presets)) {
+        config.daily_report_prompt_presets = [];
+      }
       if (typeof config.localhost_api_enabled !== 'boolean') {
         config.localhost_api_enabled = false;
       }

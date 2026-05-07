@@ -213,6 +213,7 @@
   <h3 class="settings-card-title">{t('settingsGeneral.title')}</h3>
 
   <div class="settings-section">
+    <!-- 工作时段 -->
     <div class="settings-block">
       <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span class="settings-text">{t('settingsGeneral.workTime')}</span>
@@ -265,22 +266,27 @@
         {t('settingsGeneral.addSegment')}
       </button>
       <p class="settings-note">{t('settingsGeneral.workTimeHint')}</p>
+    </div>
 
-      <div class="mt-3 flex flex-wrap items-center gap-2.5">
+    <!-- 日报设置 -->
+    <div class="settings-block pt-4 border-t border-slate-200 dark:border-slate-700">
+      <div class="flex flex-wrap items-center gap-3">
         <span class="settings-text">{t('settingsGeneral.reportAutoGenerateTime')}</span>
-        <input
-          type="time"
-          value={config.daily_report_auto_generate_time ?? ''}
-          on:change={(e) => {
-            config.daily_report_auto_generate_time = e.target.value || null;
-            dispatch('change', config);
-          }}
-          class="w-24 bg-transparent text-sm font-mono text-slate-800 dark:text-white focus:outline-none"
-        />
+        <div class="control-inline">
+          <input
+            type="time"
+            value={config.daily_report_auto_generate_time ?? ''}
+            on:change={(e) => {
+              config.daily_report_auto_generate_time = e.target.value || null;
+              dispatch('change', config);
+            }}
+            class="w-20 bg-transparent text-sm font-mono text-slate-800 dark:text-white focus:outline-none"
+          />
+        </div>
         {#if config.daily_report_auto_generate_time}
           <button
             type="button"
-            class="settings-action-secondary px-2.5 py-1.5 text-xs"
+            class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg text-rose-500 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30 transition-colors"
             on:click={() => {
               config.daily_report_auto_generate_time = null;
               dispatch('change', config);
@@ -293,60 +299,63 @@
       <p class="settings-note">{t('settingsGeneral.reportAutoGenerateTimeHint')}</p>
     </div>
 
-    <div class="space-y-2.5">
-      <div class="settings-row">
-        <span class="settings-text">{t('settingsGeneral.autoStart')}</span>
-        <button
-          on:click={toggleAutoStart}
-          class="switch-track {autoStartEnabled ? 'bg-primary-500' : 'bg-slate-300 dark:bg-slate-600'}"
-        >
-          <span class="switch-thumb {autoStartEnabled ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
-      </div>
+    <!-- 系统行为 -->
+    <div class="settings-block pt-4 border-t border-slate-200 dark:border-slate-700">
+      <div class="space-y-2.5">
+        <div class="settings-row">
+          <span class="settings-text">{t('settingsGeneral.autoStart')}</span>
+          <button
+            on:click={toggleAutoStart}
+            class="switch-track {autoStartEnabled ? 'bg-primary-500' : 'bg-slate-300 dark:bg-slate-600'}"
+          >
+            <span class="switch-thumb {autoStartEnabled ? 'translate-x-5' : 'translate-x-0'}"></span>
+          </button>
+        </div>
 
-      {#if autoStartEnabled}
-        <div class="ml-3 pl-3 border-l-2 border-primary-200/60 dark:border-primary-800/40">
-          <span class="settings-label">{t('settingsGeneral.autoStartLaunchMode')}</span>
-          <div class="mt-2 flex gap-2">
-            <button
-              type="button"
-              on:click={() => updateAutoStartLaunchMode(false)}
-              class="segment-btn {config.auto_start_silent ? 'settings-segment-base' : 'settings-segment-active'}"
-            >
-              {t('settingsGeneral.autoStartLaunchShow')}
-            </button>
-            <button
-              type="button"
-              on:click={() => updateAutoStartLaunchMode(true)}
-              class="segment-btn {config.auto_start_silent ? 'settings-segment-active' : 'settings-segment-base'}"
-            >
-              {t('settingsGeneral.autoStartLaunchSilent')}
-            </button>
+        {#if autoStartEnabled}
+          <div class="ml-3 pl-3 border-l-2 border-primary-200/60 dark:border-primary-800/40">
+            <span class="settings-label">{t('settingsGeneral.autoStartLaunchMode')}</span>
+            <div class="mt-2 flex gap-2">
+              <button
+                type="button"
+                on:click={() => updateAutoStartLaunchMode(false)}
+                class="segment-btn {config.auto_start_silent ? 'settings-segment-base' : 'settings-segment-active'}"
+              >
+                {t('settingsGeneral.autoStartLaunchShow')}
+              </button>
+              <button
+                type="button"
+                on:click={() => updateAutoStartLaunchMode(true)}
+                class="segment-btn {config.auto_start_silent ? 'settings-segment-active' : 'settings-segment-base'}"
+              >
+                {t('settingsGeneral.autoStartLaunchSilent')}
+              </button>
+            </div>
           </div>
-        </div>
-      {/if}
+        {/if}
 
-      <div class="settings-row">
-        <span class="settings-text">{t('settingsGeneral.hideDockIcon')}</span>
-        <button
-          on:click={toggleDockIcon}
-          class="switch-track {config.hide_dock_icon ? 'bg-primary-500' : 'bg-slate-300 dark:bg-slate-600'}"
-        >
-          <span class="switch-thumb {config.hide_dock_icon ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
-      </div>
-
-      <div class="settings-row">
-        <div>
-          <span class="settings-text">{t('settingsGeneral.lightweightMode')}</span>
-          <p class="settings-muted mt-0.5">{t('settingsGeneral.lightweightModeDescription')}</p>
+        <div class="settings-row">
+          <span class="settings-text">{t('settingsGeneral.hideDockIcon')}</span>
+          <button
+            on:click={toggleDockIcon}
+            class="switch-track {config.hide_dock_icon ? 'bg-primary-500' : 'bg-slate-300 dark:bg-slate-600'}"
+          >
+            <span class="switch-thumb {config.hide_dock_icon ? 'translate-x-5' : 'translate-x-0'}"></span>
+          </button>
         </div>
-        <button
-          on:click={toggleLightweightMode}
-          class="switch-track {config.lightweight_mode ? 'bg-primary-500' : 'bg-slate-300 dark:bg-slate-600'}"
-        >
-          <span class="switch-thumb {config.lightweight_mode ? 'translate-x-5' : 'translate-x-0'}"></span>
-        </button>
+
+        <div class="settings-row">
+          <div>
+            <span class="settings-text">{t('settingsGeneral.lightweightMode')}</span>
+            <p class="settings-muted mt-0.5">{t('settingsGeneral.lightweightModeDescription')}</p>
+          </div>
+          <button
+            on:click={toggleLightweightMode}
+            class="switch-track {config.lightweight_mode ? 'bg-primary-500' : 'bg-slate-300 dark:bg-slate-600'}"
+          >
+            <span class="switch-thumb {config.lightweight_mode ? 'translate-x-5' : 'translate-x-0'}"></span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

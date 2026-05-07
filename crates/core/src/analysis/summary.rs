@@ -88,7 +88,9 @@ fn request_ai_fallback_reason(locale: AppLocale, error_text: &str) -> String {
     let is_config_issue = normalized.contains("未配置")
         || normalized.contains("not configured")
         || normalized.contains("api key")
-        || normalized.contains("endpoint");
+        || normalized.contains("invalidendpoint")
+        || normalized.contains("endpoint not found")
+        || normalized.contains("endpoint does not exist");
 
     match (locale, is_config_issue) {
         (AppLocale::ZhCn, true) => "配置不可用，已回退到基础模板".to_string(),
@@ -103,6 +105,23 @@ fn request_ai_fallback_reason(locale: AppLocale, error_text: &str) -> String {
             "the AI request failed, so the report fell back to the base template".to_string()
         }
     }
+}
+
+/// 检测是否因 max_tokens 设置过大导致 400（模型输出上限低于请求值）
+fn is_max_tokens_too_large(error_text: &str) -> bool {
+    let lower = error_text.to_lowercase();
+    lower.contains("max_tokens")
+        || lower.contains("maxtokens")
+        || lower.contains("max_output_tokens")
+        || lower.contains("maxoutputtokens")
+        || lower.contains("too many tokens")
+}
+
+/// 检测是否因缺少必填的 max_tokens 参数导致 400
+fn is_max_tokens_required(error_text: &str) -> bool {
+    let lower = error_text.to_lowercase();
+    (lower.contains("max_tokens") || lower.contains("maxtokens"))
+        && (lower.contains("required") || lower.contains("must be") || lower.contains("missing"))
 }
 
 fn openai_compatible_chat_completion_urls(endpoint: &str) -> Vec<String> {
@@ -179,9 +198,37 @@ impl SummaryAnalyzer {
         let result: serde_json::Value = response.json().await?;
         Ok(result["response"].as_str().unwrap_or("").trim().to_string())
     }
-
     async fn generate_with_openai_compatible(&self, prompt: &str) -> Result<String> {
-        let payload = json!({
+        // 第一轮：不设 max_tokens，让模型用自身默认值
+        match self.try_openai_compatible_request(prompt, None).await {
+            Ok(content) => return Ok(content),
+            Err(AppError::Analysis(ref msg)) if is_max_tokens_too_large(msg) => {
+                log::info!("max_tokens 过大，降到 2048 重试");
+            }
+            Err(AppError::Analysis(ref msg)) if is_max_tokens_required(msg) => {
+                log::info!("max_tokens 必填，补上 4096 重试");
+                return self.try_openai_compatible_request(prompt, Some(4096)).await;
+            }
+            Err(e) => return Err(e),
+        }
+        // 第二轮：降到 2048
+        match self.try_openai_compatible_request(prompt, Some(2048)).await {
+            Ok(content) => return Ok(content),
+            Err(AppError::Analysis(ref msg)) if is_max_tokens_too_large(msg) => {
+                log::info!("max_tokens=2048 仍超限，降到 1024 重试");
+            }
+            Err(e) => return Err(e),
+        }
+        // 第三轮：降到 1024
+        self.try_openai_compatible_request(prompt, Some(1024)).await
+    }
+
+    async fn try_openai_compatible_request(
+        &self,
+        prompt: &str,
+        max_tokens: Option<u32>,
+    ) -> Result<String> {
+        let mut payload = json!({
             "model": self.model,
             "messages": [
                 {
@@ -193,10 +240,12 @@ impl SummaryAnalyzer {
                     "content": prompt
                 }
             ],
-            "max_tokens": 5000,
             "temperature": 0.2,
             "stream": false,
         });
+        if let Some(tokens) = max_tokens {
+            payload["max_tokens"] = json!(tokens);
+        }
 
         let mut last_error: Option<String> = None;
 
@@ -221,6 +270,9 @@ impl SummaryAnalyzer {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();
                 last_error = Some(format!("{url} API 错误 ({status}): {error_text}"));
+                if status.is_client_error() {
+                    break;
+                }
                 continue;
             }
 
@@ -243,37 +295,50 @@ impl SummaryAnalyzer {
             return Err(AppError::Analysis("Claude API Key 未配置".to_string()));
         }
 
-        let response = self
-            .client
-            .post(format!("{}/messages", self.endpoint))
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&json!({
-                "model": self.model,
-                "max_tokens": 5000,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "system": ai_system_prompt(self.locale)
-            }))
-            .send()
-            .await?;
+        // Claude API 强制要求 max_tokens，先 4096，过大则 2048 → 1024
+        let max_tokens_steps: &[u32] = &[4096, 2048, 1024];
 
-        if !response.status().is_success() {
+        for &max_tokens in max_tokens_steps {
+            let response = self
+                .client
+                .post(format!("{}/messages", self.endpoint))
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&json!({
+                    "model": self.model,
+                    "max_tokens": max_tokens,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    "system": ai_system_prompt(self.locale)
+                }))
+                .send()
+                .await?;
+
+            if response.status().is_success() {
+                let result: serde_json::Value = response.json().await?;
+                return Ok(result["content"][0]["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string());
+            }
+
             let error_text = response.text().await.unwrap_or_default();
+            if is_max_tokens_too_large(&error_text) {
+                log::info!("Claude max_tokens={max_tokens} 超限，降档重试");
+                continue;
+            }
             return Err(AppError::Analysis(format!("Claude API 错误: {error_text}")));
         }
 
-        let result: serde_json::Value = response.json().await?;
-        Ok(result["content"][0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .trim()
-            .to_string())
+        Err(AppError::Analysis(
+            "Claude 模型不支持足够的输出长度，请更换模型".to_string(),
+        ))
     }
 
     async fn generate_with_gemini(&self, prompt: &str) -> Result<String> {
@@ -287,34 +352,64 @@ impl SummaryAnalyzer {
             self.endpoint, self.model, api_key
         );
 
+        let text = format!("{}\n\n{}", ai_system_prompt(self.locale), prompt);
+
+        // 第一轮：不设 maxOutputTokens
+        match self.try_gemini_request(&url, &text, None).await {
+            Ok(content) => return Ok(content),
+            Err(AppError::Analysis(ref msg)) if is_max_tokens_too_large(msg) => {
+                log::info!("Gemini max_tokens 过大，降到 2048 重试");
+            }
+            Err(AppError::Analysis(ref msg)) if is_max_tokens_required(msg) => {
+                log::info!("Gemini max_tokens 必填，补上 4096 重试");
+                return self.try_gemini_request(&url, &text, Some(4096)).await;
+            }
+            Err(e) => return Err(e),
+        }
+        // 第二轮：2048
+        match self.try_gemini_request(&url, &text, Some(2048)).await {
+            Ok(content) => return Ok(content),
+            Err(AppError::Analysis(ref msg)) if is_max_tokens_too_large(msg) => {
+                log::info!("Gemini max_tokens=2048 仍超限，降到 1024 重试");
+            }
+            Err(e) => return Err(e),
+        }
+        // 第三轮：1024
+        self.try_gemini_request(&url, &text, Some(1024)).await
+    }
+
+    async fn try_gemini_request(
+        &self,
+        url: &str,
+        text: &str,
+        max_output_tokens: Option<u32>,
+    ) -> Result<String> {
+        let mut config = json!({ "temperature": 0.2 });
+        if let Some(tokens) = max_output_tokens {
+            config["maxOutputTokens"] = json!(tokens);
+        }
+
         let response = self
             .client
-            .post(&url)
+            .post(url)
             .json(&json!({
-                "contents": [{
-                    "parts": [{
-                        "text": format!("{}\n\n{}", ai_system_prompt(self.locale), prompt)
-                    }]
-                }],
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "maxOutputTokens": 5000
-                }
+                "contents": [{ "parts": [{ "text": text }] }],
+                "generationConfig": config
             }))
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::Analysis(format!("Gemini API 错误: {error_text}")));
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            return Ok(result["candidates"][0]["content"]["parts"][0]["text"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string());
         }
 
-        let result: serde_json::Value = response.json().await?;
-        Ok(result["candidates"][0]["content"]["parts"][0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .trim()
-            .to_string())
+        let error_text = response.text().await.unwrap_or_default();
+        Err(AppError::Analysis(format!("Gemini API 错误: {error_text}")))
     }
 
     async fn generate_ai_content(&self, prompt: &str) -> Result<String> {
@@ -611,39 +706,12 @@ impl Analyzer for SummaryAnalyzer {
         match locale {
             AppLocale::ZhCn => {
                 report.push_str(&format!("# 工作日报\n\n**日期：{date}**\n\n"));
-                report.push_str("## 一、今日概览\n\n");
-                report.push_str("| 指标 | 数值 |\n|:--|--:|\n");
-                report.push_str(&format!(
-                    "| 总工作时长 | {} |\n| 截图数量 | {} 张 |\n| 使用应用数 | {} 个 |\n| 访问网站数 | {} 个 |\n\n",
-                    format_duration_for_locale(stats.total_duration, locale),
-                    stats.screenshot_count,
-                    stats.app_usage.len(),
-                    stats.domain_usage.len()
-                ));
             }
             AppLocale::ZhTw => {
                 report.push_str(&format!("# 工作日報\n\n**日期：{date}**\n\n"));
-                report.push_str("## 一、今日概覽\n\n");
-                report.push_str("| 指標 | 數值 |\n|:--|--:|\n");
-                report.push_str(&format!(
-                    "| 總工作時長 | {} |\n| 截圖數量 | {} 張 |\n| 使用應用數 | {} 個 |\n| 造訪網站數 | {} 個 |\n\n",
-                    format_duration_for_locale(stats.total_duration, locale),
-                    stats.screenshot_count,
-                    stats.app_usage.len(),
-                    stats.domain_usage.len()
-                ));
             }
             AppLocale::En => {
                 report.push_str(&format!("# Daily Report\n\n**Date:** {date}\n\n"));
-                report.push_str("## 1. Overview\n\n");
-                report.push_str("| Metric | Value |\n|:--|--:|\n");
-                report.push_str(&format!(
-                    "| Total work duration | {} |\n| Screenshot count | {} |\n| Apps used | {} |\n| Websites visited | {} |\n\n",
-                    format_duration_for_locale(stats.total_duration, locale),
-                    stats.screenshot_count,
-                    stats.app_usage.len(),
-                    stats.domain_usage.len()
-                ));
             }
         }
 

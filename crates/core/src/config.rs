@@ -281,6 +281,15 @@ pub struct CustomSemanticCategory {
     pub name: String,
 }
 
+/// 日报提示词预设模板
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PromptPreset {
+    /// 预设名称
+    pub name: String,
+    /// 提示词内容
+    pub prompt: String,
+}
+
 /// 网站语义分类规则
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WebsiteSemanticRule {
@@ -591,6 +600,9 @@ pub struct AppConfig {
     /// 日报附加提示词
     #[serde(default)]
     pub daily_report_custom_prompt: String,
+    /// 日报提示词预设模板列表
+    #[serde(default)]
+    pub daily_report_prompt_presets: Vec<PromptPreset>,
     /// 日报 Markdown 导出目录
     #[serde(default)]
     pub daily_report_export_dir: Option<String>,
@@ -774,6 +786,7 @@ impl Default for AppConfig {
             custom_semantic_categories: Vec::new(),
             storage: StorageConfig::default(),
             daily_report_custom_prompt: String::new(),
+            daily_report_prompt_presets: Vec::new(),
             daily_report_export_dir: None,
             daily_report_auto_export: false,
             daily_report_auto_generate_time: None,
@@ -859,6 +872,7 @@ impl AppConfig {
         self.break_reminder_interval_minutes =
             normalize_break_reminder_interval_minutes(self.break_reminder_interval_minutes);
         self.daily_report_custom_prompt = self.daily_report_custom_prompt.trim().to_string();
+        normalize_prompt_presets(&mut self.daily_report_prompt_presets);
         self.daily_report_export_dir =
             normalize_optional_string(self.daily_report_export_dir.take());
         self.localhost_api_port = normalize_localhost_api_port(self.localhost_api_port);
@@ -1166,6 +1180,14 @@ fn normalize_custom_semantic_categories(categories: &mut Vec<CustomSemanticCateg
         }
         seen.insert(key)
     });
+}
+
+fn normalize_prompt_presets(presets: &mut Vec<PromptPreset>) {
+    for p in presets.iter_mut() {
+        p.name = p.name.trim().to_string();
+        p.prompt = p.prompt.trim().to_string();
+    }
+    presets.retain(|p| !p.name.is_empty() && !p.prompt.is_empty());
 }
 
 fn normalize_avatar_scale(value: f64) -> f64 {

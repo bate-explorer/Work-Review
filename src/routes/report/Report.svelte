@@ -7,7 +7,7 @@
   import DOMPurify from 'dompurify';
   import { showToast } from '../../lib/stores/toast.js';
   import { cache } from '../../lib/stores/cache.js';
-  import { formatLocalizedDate, formatLocalizedTime, locale, t } from '$lib/i18n/index.js';
+  import { formatLocalizedDate, formatLocalizedTime, formatDurationLocalized, locale, t } from '$lib/i18n/index.js';
   import { shouldShowPromptAppliedToast } from './reportPromptFeedback.js';
   import { resolveReportMeta } from './reportMeta.js';
   import LocalizedDatePicker from '../../lib/components/LocalizedDatePicker.svelte';
@@ -28,7 +28,15 @@
   let generating = false;
   let error = null;
   let selectedDate = getLocalDateString();
+  let freshStats = null;
   let isYesterdayReport = false; // 标记是否显示的是昨日日报
+  let showPresetDropdown = false;
+  let dropdownStyle = '';
+  let showPresetModal = false;
+  let presetSaving = false;
+  let editingPresetIndex = -1;
+  let editingPresetName = '';
+  let editingPresetPrompt = '';
   let config = null;
   let lastLoadedDate = '';
   let reportRequestId = 0;
@@ -73,6 +81,12 @@
 
   async function loadReport(previousReport = null) {
     const requestId = ++reportRequestId;
+    freshStats = null;
+
+    // 并行加载实时统计
+    invoke('get_daily_stats', { date: selectedDate })
+      .then(stats => { if (requestId === reportRequestId) freshStats = stats; })
+      .catch(() => {});
 
     // 乐观更新：先显示缓存数据
     let cacheData;
@@ -195,6 +209,14 @@
       await invoke('save_config', { config });
     } finally {
       promptSaving = false;
+    }
+  }
+
+  async function savePresets() {
+    try {
+      await invoke('save_config', { config });
+    } catch (e) {
+      console.error('保存预设失败:', e);
     }
   }
 
@@ -448,7 +470,87 @@
   <div class="report-editorial-stack">
   {#if config && config.ai_mode === 'summary'}
     <div class="page-card report-sheet report-sheet-controls">
-      <label for="daily-report-custom-prompt" class="settings-label mb-1.5">{t('report.promptLabel')}</label>
+      <div class="flex items-center justify-between mb-1.5">
+        <label for="daily-report-custom-prompt" class="settings-label">{t('report.promptLabel')}</label>
+        <div class="relative">
+          <button
+            type="button"
+            data-preset-toggle
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-500 transition-colors"
+            on:click={(e) => {
+              if (showPresetDropdown) {
+                showPresetDropdown = false;
+                return;
+              }
+              const rect = e.currentTarget.getBoundingClientRect();
+              dropdownStyle = `position:fixed;top:${rect.bottom + 6}px;right:${window.innerWidth - rect.right}px;width:220px;max-height:360px;`;
+              showPresetDropdown = true;
+            }}
+          >
+            <span class="truncate max-w-[140px]">{t('report.presetsTitle')}</span>
+            <svg class="w-3.5 h-3.5 transition-transform {showPresetDropdown ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+          </button>
+          {#if showPresetDropdown}
+            <svelte:window on:click={(e) => {
+              if (!e.target.closest('[data-preset-dropdown]') && !e.target.closest('[data-preset-toggle]')) {
+                showPresetDropdown = false;
+              }
+            }} />
+            <!-- svelte-ignore a11y-click-events-have-key-events -->
+            <div data-preset-dropdown style={dropdownStyle} class="z-50 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-xl overscroll-contain" on:wheel={(e) => { e.stopPropagation(); e.preventDefault(); e.currentTarget.scrollTop += e.deltaY; }} on:touchmove|stopPropagation>
+              <div class="py-1">
+                {#each (config?.daily_report_prompt_presets || []) as preset, i}
+                  <div class="flex items-center px-1">
+                    <button
+                      type="button"
+                      class="flex-1 text-left px-2.5 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors truncate"
+                      title={preset.prompt}
+                      on:click={() => {
+                        config.daily_report_custom_prompt = preset.prompt;
+                        persistReportPrompt();
+                        showPresetDropdown = false;
+                      }}
+                    >
+                      {preset.name}
+                    </button>
+                    <button
+                      type="button"
+                      class="p-1.5 text-slate-300 hover:text-rose-500 dark:text-slate-500 dark:hover:text-rose-400 rounded-md hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors shrink-0"
+                      title="删除"
+                      on:click|stopPropagation={async () => {
+                        config.daily_report_prompt_presets = config.daily_report_prompt_presets.filter((_, j) => j !== i);
+                        await savePresets();
+                      }}
+                    >
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                    </button>
+                  </div>
+                {:else}
+                  <div class="px-3 py-3 text-xs text-slate-400 dark:text-slate-500 text-center">
+                    {t('report.presetNone')}
+                  </div>
+                {/each}
+              </div>
+              <div class="border-t border-slate-100 dark:border-slate-700">
+                <button
+                  type="button"
+                  class="w-full text-left px-3 py-2.5 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors flex items-center gap-1.5"
+                  on:click={() => {
+                    editingPresetIndex = -1;
+                    editingPresetName = '';
+                    editingPresetPrompt = '';
+                    showPresetDropdown = false;
+                    showPresetModal = true;
+                  }}
+                >
+                  <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+                  {t('report.addPreset')}
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
       <textarea
         id="daily-report-custom-prompt"
         bind:value={config.daily_report_custom_prompt}
@@ -518,6 +620,26 @@
           <div class="w-1.5 h-1.5 rounded-full {isYesterdayReport ? 'bg-amber-500' : 'bg-emerald-500'}"></div>
           {isYesterdayReport ? t('report.yesterdayPrefix') : ''}{t('report.generatedAt', { time: formatLocalizedDate(new Date(report.created_at * 1000), { year: 'numeric', month: '2-digit', day: '2-digit' }) + ' ' + formatLocalizedTime(new Date(report.created_at * 1000), { hour: '2-digit', minute: '2-digit', second: '2-digit' }) })}
         </div>
+        {#if freshStats}
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+            <div class="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-3 py-2.5 text-center">
+              <div class="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">{t('report.statTotalDuration')}</div>
+              <div class="text-sm font-semibold text-slate-800 dark:text-slate-200">{formatDurationLocalized(freshStats.total_duration)}</div>
+            </div>
+            <div class="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-3 py-2.5 text-center">
+              <div class="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">{t('report.statScreenshots')}</div>
+              <div class="text-sm font-semibold text-slate-800 dark:text-slate-200">{freshStats.screenshot_count}</div>
+            </div>
+            <div class="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-3 py-2.5 text-center">
+              <div class="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">{t('report.statApps')}</div>
+              <div class="text-sm font-semibold text-slate-800 dark:text-slate-200">{freshStats.app_usage?.length ?? 0}</div>
+            </div>
+            <div class="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-3 py-2.5 text-center">
+              <div class="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">{t('report.statWebsites')}</div>
+              <div class="text-sm font-semibold text-slate-800 dark:text-slate-200">{freshStats.domain_usage?.length ?? 0}</div>
+            </div>
+          </div>
+        {/if}
         <div class="markdown-body report-sheet-body prose prose-slate dark:prose-invert max-w-none">
           {#each reportSections as section, i}
             <div class="report-section">
@@ -607,3 +729,75 @@
 {/if}
 
 <!-- 表格 / 标题 / 列表等 markdown 样式已统一放到 app.css .markdown-body -->
+
+{#if showPresetModal}
+  <div class="modal-overlay" on:click|self={() => { showPresetModal = false; }}>
+    <div class="modal-panel" style="max-width: 36rem;" on:click|stopPropagation>
+      <div class="modal-header">
+        <h3 class="modal-title">{editingPresetIndex >= 0 ? editingPresetName || t('report.presetsTitle') : t('report.addPreset')}</h3>
+        <button class="modal-close" on:click={() => { showPresetModal = false; }}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">{t('report.presetNamePlaceholder')}</label>
+          <input
+            type="text"
+            class="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 transition-colors"
+            placeholder={t('report.presetNamePlaceholder')}
+            bind:value={editingPresetName}
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">{t('report.promptLabel')}</label>
+          <textarea
+            class="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 transition-colors resize-y min-h-[160px] leading-relaxed"
+            placeholder={t('report.presetPromptPlaceholder')}
+            bind:value={editingPresetPrompt}
+            rows="6"
+          ></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button
+          class="px-4 py-2 text-sm font-medium rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+          on:click={() => { showPresetModal = false; }}
+        >
+          {t('report.cancelEdit')}
+        </button>
+        <button
+          class="px-4 py-2 text-sm font-medium rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!editingPresetName.trim() || !editingPresetPrompt.trim() || presetSaving}
+          on:click={async () => {
+            if (presetSaving) return;
+            presetSaving = true;
+            try {
+              const presets = [...(config.daily_report_prompt_presets || [])];
+              const entry = { name: editingPresetName.trim(), prompt: editingPresetPrompt.trim() };
+              if (editingPresetIndex >= 0) {
+                presets[editingPresetIndex] = entry;
+              } else {
+                presets.push(entry);
+              }
+              config.daily_report_prompt_presets = presets;
+              await savePresets();
+              showPresetModal = false;
+            } finally {
+              presetSaving = false;
+            }
+          }}
+        >
+          {#if presetSaving}
+            <span class="inline-flex items-center gap-1.5">
+              <span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              {t('report.saving')}
+            </span>
+          {:else}
+            {t('report.saveSection')}
+          {/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
