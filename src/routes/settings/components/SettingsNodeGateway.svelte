@@ -616,6 +616,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
               </svg>
               <span class="text-sm font-medium text-slate-700 dark:text-slate-200">{t('nodeGatewayPage.apiExamples')}</span>
+              <span class="text-[10px] text-slate-400">19 endpoints</span>
             </div>
             <svg class="w-4 h-4 text-slate-400 transition-transform {examplesExpanded ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -623,10 +624,10 @@
           </button>
 
           {#if examplesExpanded}
-          <div class="mt-2 space-y-1.5">
+          <div class="mt-2 space-y-2">
             <p class="text-[11px] text-slate-400 dark:text-slate-500">{t('nodeGatewayPage.apiExamplesHint')}</p>
-            <!-- 分类按钮 -->
-            <div class="flex flex-wrap gap-1.5 mb-1">
+            <!-- Category filter buttons -->
+            <div class="flex flex-wrap gap-1.5">
               {#each [
                 { key: 'all', label: t('nodeGatewayPage.apiCategoryAll') },
                 { key: 'report', label: t('nodeGatewayPage.apiCategoryReport') },
@@ -637,47 +638,56 @@
                 <button
                   type="button"
                   on:click={() => activeApiCategory = cat.key}
-                  class="px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors
+                  class="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors
                          {activeApiCategory === cat.key
                            ? 'bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-800'
-                           : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}"
+                           : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'}"
                 >{cat.label}</button>
               {/each}
             </div>
 
             {#each [
-              { cat: 'system', label: 'GET /health', desc: t('nodeGatewayPage.exampleHealthDesc'), cmd: curlCommand('GET', '/health') },
-              { cat: 'system', label: 'GET /v1/device', desc: t('nodeGatewayPage.exampleDeviceDesc'), cmd: curlCommand('GET', '/v1/device') },
-              { cat: 'system', label: 'GET /v1/storage/stats', desc: t('nodeGatewayPage.exampleStorageStatsDesc'), cmd: curlCommand('GET', '/v1/storage/stats') },
-              { cat: 'report', label: 'GET /v1/reports', desc: t('nodeGatewayPage.exampleReportsDesc'), cmd: curlCommand('GET', '/v1/reports') },
-              { cat: 'report', label: 'GET /v1/reports/:date', desc: t('nodeGatewayPage.exampleReportByDateDesc'), cmd: curlCommand('GET', '/v1/reports/2025-01-15') },
-              { cat: 'report', label: 'GET /v1/reports/generate', desc: t('nodeGatewayPage.exampleGenerateDesc'), cmd: curlCommand('GET', '/v1/reports/generate?date=2025-01-15') },
-              { cat: 'report', label: 'POST /v1/reports/export-markdown', desc: t('nodeGatewayPage.exampleExportDesc'), cmd: curlCommand('POST', '/v1/reports/export-markdown', { date: '2025-01-15', content: '# Report', export_dir: '/path/to/dir' }) },
-              { cat: 'report', label: 'GET /v1/weekly-review', desc: t('nodeGatewayPage.exampleWeeklyReviewDesc'), cmd: curlCommand('GET', '/v1/weekly-review?date_from=2025-01-13&date_to=2025-01-19') },
-              { cat: 'timeline', label: 'GET /v1/timeline/:date', desc: t('nodeGatewayPage.exampleTimelineDesc'), cmd: curlCommand('GET', '/v1/timeline/2025-01-15') },
-              { cat: 'timeline', label: 'GET /v1/activities/:date', desc: t('nodeGatewayPage.exampleActivitiesDesc'), cmd: curlCommand('GET', '/v1/activities/2025-01-15') },
-              { cat: 'timeline', label: 'GET /v1/hourly-summaries/:date', desc: t('nodeGatewayPage.exampleHourlySummariesDesc'), cmd: curlCommand('GET', '/v1/hourly-summaries/2025-01-15') },
-              { cat: 'stats', label: 'GET /v1/stats/today', desc: t('nodeGatewayPage.exampleStatsTodayDesc'), cmd: curlCommand('GET', '/v1/stats/today') },
-              { cat: 'stats', label: 'GET /v1/stats/daily/:date', desc: t('nodeGatewayPage.exampleStatsDailyDesc'), cmd: curlCommand('GET', '/v1/stats/daily/2025-01-15') },
-              { cat: 'stats', label: 'GET /v1/stats/overview', desc: t('nodeGatewayPage.exampleStatsOverviewDesc'), cmd: curlCommand('GET', '/v1/stats/overview?mode=week&date=2025-01-17') },
-              { cat: 'stats', label: 'GET /v1/hourly-app-breakdown/:date', desc: t('nodeGatewayPage.exampleHourlyBreakdownDesc'), cmd: curlCommand('GET', '/v1/hourly-app-breakdown/2025-01-15') },
-              { cat: 'stats', label: 'GET /v1/apps/recent', desc: t('nodeGatewayPage.exampleAppsRecentDesc'), cmd: curlCommand('GET', '/v1/apps/recent') },
-              { cat: 'stats', label: 'GET /v1/apps/category-overview', desc: t('nodeGatewayPage.exampleAppsCategoryDesc'), cmd: curlCommand('GET', '/v1/apps/category-overview') },
-              { cat: 'stats', label: 'GET /v1/categories', desc: t('nodeGatewayPage.exampleCategoriesDesc'), cmd: curlCommand('GET', '/v1/categories') },
-              { cat: 'stats', label: 'GET /v1/categories/semantic', desc: t('nodeGatewayPage.exampleSemanticCategoriesDesc'), cmd: curlCommand('GET', '/v1/categories/semantic') },
+              { cat: 'system', method: 'GET', path: '/health', desc: t('nodeGatewayPage.exampleHealthDesc'), cmd: curlCommand('GET', '/health') },
+              { cat: 'system', method: 'GET', path: '/v1/device', desc: t('nodeGatewayPage.exampleDeviceDesc'), cmd: curlCommand('GET', '/v1/device') },
+              { cat: 'system', method: 'GET', path: '/v1/storage/stats', desc: t('nodeGatewayPage.exampleStorageStatsDesc'), cmd: curlCommand('GET', '/v1/storage/stats') },
+              { cat: 'report', method: 'GET', path: '/v1/reports', desc: t('nodeGatewayPage.exampleReportsDesc'), cmd: curlCommand('GET', '/v1/reports') },
+              { cat: 'report', method: 'GET', path: '/v1/reports/:date', desc: t('nodeGatewayPage.exampleReportByDateDesc'), cmd: curlCommand('GET', '/v1/reports/2025-01-15') },
+              { cat: 'report', method: 'GET', path: '/v1/reports/generate', desc: t('nodeGatewayPage.exampleGenerateDesc'), cmd: curlCommand('GET', '/v1/reports/generate?date=2025-01-15') },
+              { cat: 'report', method: 'POST', path: '/v1/reports/export-markdown', desc: t('nodeGatewayPage.exampleExportDesc'), cmd: curlCommand('POST', '/v1/reports/export-markdown', { date: '2025-01-15', content: '# Report', export_dir: '/path/to/dir' }) },
+              { cat: 'report', method: 'GET', path: '/v1/weekly-review', desc: t('nodeGatewayPage.exampleWeeklyReviewDesc'), cmd: curlCommand('GET', '/v1/weekly-review?date_from=2025-01-13&date_to=2025-01-19') },
+              { cat: 'timeline', method: 'GET', path: '/v1/timeline/:date', desc: t('nodeGatewayPage.exampleTimelineDesc'), cmd: curlCommand('GET', '/v1/timeline/2025-01-15') },
+              { cat: 'timeline', method: 'GET', path: '/v1/activities/:date', desc: t('nodeGatewayPage.exampleActivitiesDesc'), cmd: curlCommand('GET', '/v1/activities/2025-01-15') },
+              { cat: 'timeline', method: 'GET', path: '/v1/hourly-summaries/:date', desc: t('nodeGatewayPage.exampleHourlySummariesDesc'), cmd: curlCommand('GET', '/v1/hourly-summaries/2025-01-15') },
+              { cat: 'stats', method: 'GET', path: '/v1/stats/today', desc: t('nodeGatewayPage.exampleStatsTodayDesc'), cmd: curlCommand('GET', '/v1/stats/today') },
+              { cat: 'stats', method: 'GET', path: '/v1/stats/daily/:date', desc: t('nodeGatewayPage.exampleStatsDailyDesc'), cmd: curlCommand('GET', '/v1/stats/daily/2025-01-15') },
+              { cat: 'stats', method: 'GET', path: '/v1/stats/overview', desc: t('nodeGatewayPage.exampleStatsOverviewDesc'), cmd: curlCommand('GET', '/v1/stats/overview?mode=week&date=2025-01-17') },
+              { cat: 'stats', method: 'GET', path: '/v1/hourly-app-breakdown/:date', desc: t('nodeGatewayPage.exampleHourlyBreakdownDesc'), cmd: curlCommand('GET', '/v1/hourly-app-breakdown/2025-01-15') },
+              { cat: 'stats', method: 'GET', path: '/v1/apps/recent', desc: t('nodeGatewayPage.exampleAppsRecentDesc'), cmd: curlCommand('GET', '/v1/apps/recent') },
+              { cat: 'stats', method: 'GET', path: '/v1/apps/category-overview', desc: t('nodeGatewayPage.exampleAppsCategoryDesc'), cmd: curlCommand('GET', '/v1/apps/category-overview') },
+              { cat: 'stats', method: 'GET', path: '/v1/categories', desc: t('nodeGatewayPage.exampleCategoriesDesc'), cmd: curlCommand('GET', '/v1/categories') },
+              { cat: 'stats', method: 'GET', path: '/v1/categories/semantic', desc: t('nodeGatewayPage.exampleSemanticCategoriesDesc'), cmd: curlCommand('GET', '/v1/categories/semantic') },
             ] as example}
               {#if activeApiCategory === 'all' || activeApiCategory === example.cat}
-            <div class="flex items-start justify-between gap-2 rounded-lg bg-white/70 px-3 py-1.5 ring-1 ring-slate-200/70 dark:bg-slate-900/20 dark:ring-slate-700/70">
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="text-xs font-mono font-medium text-slate-600 dark:text-slate-300">{example.label}</span>
-                  <span class="text-[11px] text-slate-400">{example.desc}</span>
-                </div>
-                <code class="block text-[11px] font-mono text-slate-500 dark:text-slate-400 break-all leading-relaxed">{example.cmd}</code>
+            <div class="rounded-lg ring-1 ring-slate-200/70 dark:ring-slate-700/70 overflow-hidden">
+              <!-- Header: method badge + path + copy button -->
+              <div class="flex items-center gap-2 bg-white/90 px-3 py-1.5 dark:bg-slate-800/60">
+                <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold leading-none
+                  {example.method === 'POST'
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+                    : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'}"
+                >{example.method}</span>
+                <span class="text-xs font-mono font-medium text-slate-700 dark:text-slate-200 truncate">{example.path}</span>
+                <span class="ml-auto shrink-0">
+                  <button type="button" class="rounded-md px-2 py-0.5 text-[10px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200 transition-colors" on:click={() => copyCurl(example.cmd)}>
+                    {t('nodeGatewayPage.copyCurl')}
+                  </button>
+                </span>
               </div>
-              <button type="button" class="settings-chip-button text-[10px] shrink-0" on:click={() => copyCurl(example.cmd)}>
-                {t('nodeGatewayPage.copyCurl')}
-              </button>
+              <!-- Body: description + curl -->
+              <div class="border-t border-slate-100 dark:border-slate-700/50">
+                <div class="px-3 py-1 text-[11px] text-slate-500 dark:text-slate-400">{example.desc}</div>
+                <pre class="mx-2 mb-1.5 rounded-md bg-slate-800/90 px-2.5 py-1.5 text-[10.5px] font-mono leading-relaxed text-emerald-300/90 dark:bg-slate-900/90 overflow-x-auto" on:click={() => copyCurl(example.cmd)}>{example.cmd}</pre>
+              </div>
             </div>
               {/if}
             {/each}
