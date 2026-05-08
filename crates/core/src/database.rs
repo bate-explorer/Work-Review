@@ -107,6 +107,21 @@ pub struct HourlyActivityBucket {
     pub duration: i64,
 }
 
+/// 每小时×应用的时长分布
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HourlyAppBucket {
+    pub hour: i32,
+    pub total_duration: i64,
+    pub apps: Vec<AppDuration>,
+}
+
+/// 单个应用的时长
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AppDuration {
+    pub app_name: String,
+    pub duration: i64,
+}
+
 /// 小时摘要
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HourlySummary {
@@ -1580,6 +1595,57 @@ impl Database {
             .collect();
 
         Ok(activities)
+    }
+
+    /// 获取每小时×应用的时长分布
+    /// 返回 24 个小时桶，每桶内含各应用的累计时长
+    pub fn get_hourly_app_breakdown(&self, date: &str) -> Result<Vec<HourlyAppBucket>> {
+        let date_parsed = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .map_err(|e| AppError::Config(e.to_string()))?;
+        let start_ts = safe_local_timestamp(date_parsed.and_hms_opt(0, 0, 0).unwrap());
+        let end_ts = start_ts + 86400;
+        let conn = self.conn.lock().map_err(|e| {
+            AppError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+
+        let mut stmt = conn.prepare(
+            "SELECT
+                CAST((timestamp - ?1) / 3600 AS INTEGER) as hour,
+                app_name,
+                SUM(duration) as total_duration
+             FROM activities
+             WHERE timestamp >= ?1 AND timestamp < ?2 AND duration > 0
+             GROUP BY hour, app_name
+             ORDER BY hour, total_duration DESC",
+        )?;
+
+        let raw: Vec<(i32, String, i64)> = stmt
+            .query_map(params![start_ts, end_ts], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // 按 hour 分桶
+        let mut buckets: Vec<HourlyAppBucket> = (0..24)
+            .map(|h| HourlyAppBucket {
+                hour: h,
+                total_duration: 0,
+                apps: Vec::new(),
+            })
+            .collect();
+
+        for (hour, app_name, duration) in raw {
+            if let Some(bucket) = buckets.get_mut(hour as usize) {
+                bucket.total_duration += duration;
+                bucket.apps.push(AppDuration {
+                    app_name,
+                    duration,
+                });
+            }
+        }
+
+        Ok(buckets)
     }
 
     /// 获取日期范围内的原始活动记录

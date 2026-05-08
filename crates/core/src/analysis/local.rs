@@ -1,8 +1,12 @@
+use crate::analysis::report_blocks::{
+    render_local_app_usage_list, render_local_category_list, render_local_domain_usage_list,
+    render_local_overview, wrap_block, BLOCK_LOCAL_APP_USAGE, BLOCK_LOCAL_CATEGORY,
+    BLOCK_LOCAL_DOMAIN_USAGE, BLOCK_LOCAL_OVERVIEW, BLOCK_HOURLY_SUMMARY,
+};
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
     generate_hourly_activity_summary_for_locale, generate_session_timeline,
-    translate_category_name, translate_semantic_category_name, Analyzer, AppLocale,
-    GeneratedReport,
+    translate_semantic_category_name, Analyzer, AppLocale, GeneratedReport,
 };
 use crate::database::{Activity, DailyStats};
 use crate::error::{AppError, Result};
@@ -344,88 +348,43 @@ impl Analyzer for LocalAnalyzer {
         let mut used_ai = false;
         let mut fallback_reason = None;
 
-        report.push_str(match locale {
-            AppLocale::ZhCn => "## 一、今日概览\n\n",
-            AppLocale::ZhTw => "## 一、今日概覽\n\n",
-            AppLocale::En => "## 1. Overview\n\n",
-        });
-        let overview_summary = match locale {
-            AppLocale::ZhCn => format!(
-                "- **总工作时长**: {}\n- **截图数量**: {} 张\n- **使用应用**: {} 个\n\n",
-                format_duration_for_locale(stats.total_duration, locale),
-                stats.screenshot_count,
-                stats.app_usage.len()
-            ),
-            AppLocale::ZhTw => format!(
-                "- **總工作時長**: {}\n- **截圖數量**: {} 張\n- **使用應用**: {} 個\n\n",
-                format_duration_for_locale(stats.total_duration, locale),
-                stats.screenshot_count,
-                stats.app_usage.len()
-            ),
-            AppLocale::En => format!(
-                "- **Total work duration**: {}\n- **Screenshots**: {}\n- **Apps used**: {}\n\n",
-                format_duration_for_locale(stats.total_duration, locale),
-                stats.screenshot_count,
-                stats.app_usage.len()
-            ),
-        };
-        report.push_str(&overview_summary);
+        report.push_str(&wrap_block(
+            BLOCK_LOCAL_OVERVIEW,
+            &render_local_overview(stats, locale),
+        ));
 
-        report.push_str(match locale {
-            AppLocale::ZhCn => "## 二、时间分配\n\n",
-            AppLocale::ZhTw => "## 二、時間分配\n\n",
-            AppLocale::En => "## 2. Time allocation\n\n",
-        });
-        for cat in &stats.category_usage {
-            let percentage = if stats.total_duration > 0 {
-                (cat.duration as f64 / stats.total_duration as f64 * 100.0) as i32
-            } else {
-                0
-            };
-            report.push_str(&format!(
-                "- **{}**: {} ({}%)\n",
-                translate_category_name(&cat.category, locale),
-                format_duration_for_locale(cat.duration, locale),
-                percentage
+        if !stats.category_usage.is_empty() {
+            report.push_str(&wrap_block(
+                BLOCK_LOCAL_CATEGORY,
+                &render_local_category_list(stats, locale),
             ));
         }
 
-        report.push_str(match locale {
-            AppLocale::ZhCn => "\n## 三、应用使用情况\n\n",
-            AppLocale::ZhTw => "\n## 三、應用使用情況\n\n",
-            AppLocale::En => "\n## 3. App usage\n\n",
-        });
-        for (index, app) in stats.app_usage.iter().take(5).enumerate() {
-            report.push_str(&format!(
-                "{}. **{}**: {}\n",
-                index + 1,
-                app.app_name,
-                format_duration_for_locale(app.duration, locale)
+        if !stats.app_usage.is_empty() {
+            report.push_str(&wrap_block(
+                BLOCK_LOCAL_APP_USAGE,
+                &render_local_app_usage_list(stats, locale),
             ));
         }
 
         if let Some(hourly_summary) = generate_hourly_activity_summary_for_locale(stats, locale) {
-            report.push_str(match locale {
-                AppLocale::ZhCn => "\n## 四、按小时活跃度\n\n",
-                AppLocale::ZhTw => "\n## 四、按小時活躍度\n\n",
-                AppLocale::En => "\n## 4. Hourly activity\n\n",
+            // 直接复用 summary 模式的小时活跃度块格式（标记名一致 → 读时统一替换）
+            let mut hourly_block = String::new();
+            hourly_block.push_str(match locale {
+                AppLocale::ZhCn => "## 四、按小时活跃度\n\n",
+                AppLocale::ZhTw => "## 四、按小時活躍度\n\n",
+                AppLocale::En => "## 4. Hourly Activity\n\n",
             });
-            report.push_str(&hourly_summary);
+            hourly_block.push_str(&hourly_summary);
+            hourly_block.push('\n');
+            report.push_str(&wrap_block(BLOCK_HOURLY_SUMMARY, &hourly_block));
         }
 
         if !stats.domain_usage.is_empty() {
-            report.push_str(match locale {
-                AppLocale::ZhCn => "\n## 五、网站访问\n\n",
-                AppLocale::ZhTw => "\n## 五、網站造訪\n\n",
-                AppLocale::En => "\n## 5. Website visits\n\n",
-            });
-            for domain in stats.domain_usage.iter().take(5) {
-                report.push_str(&format!(
-                    "- **{}**: {}\n",
-                    format_domain_label(domain, locale),
-                    format_duration_for_locale(domain.duration, locale)
-                ));
-            }
+            report.push_str(&wrap_block(
+                BLOCK_LOCAL_DOMAIN_USAGE,
+                &render_local_domain_usage_list(stats, locale),
+            ));
         }
 
         match self.generate_with_ollama(date, stats, activities).await {

@@ -215,11 +215,29 @@
   <div class="settings-section">
     <!-- 工作时段 -->
     <div class="settings-block">
-      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span class="settings-text">{t('settingsGeneral.workTime')}</span>
-        <span class="settings-muted">{t('settingsGeneral.totalWorkHours', { duration: workHours })}</span>
+      <div class="flex items-center justify-between">
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span class="settings-text">{t('settingsGeneral.workTime')}</span>
+          {#if config.work_time_enabled}
+            <span class="settings-muted">{t('settingsGeneral.totalWorkHours', { duration: workHours })}</span>
+          {:else}
+            <span class="settings-muted">{t('settingsGeneral.workTimeDisabledHint')}</span>
+          {/if}
+        </div>
+        <button
+          type="button"
+          on:click={() => {
+            config.work_time_enabled = !config.work_time_enabled;
+            handleChange();
+          }}
+          class="switch-track {config.work_time_enabled ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}"
+          aria-pressed={config.work_time_enabled}
+        >
+          <span class="switch-thumb {config.work_time_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
+        </button>
       </div>
 
+      {#if config.work_time_enabled}
       <div class="space-y-2.5">
         {#each workSegments as segment, index}
           <div class="flex flex-wrap items-center gap-2.5">
@@ -266,6 +284,30 @@
         {t('settingsGeneral.addSegment')}
       </button>
       <p class="settings-note">{t('settingsGeneral.workTimeHint')}</p>
+      {/if}
+
+      <!-- 空闲检测阈值 -->
+      <div class="flex items-center justify-between mt-3">
+        <div>
+          <span class="settings-text text-sm">{t('settingsGeneral.idleThreshold')}</span>
+          <p class="settings-muted mt-0.5">{t('settingsGeneral.idleThresholdHint')}</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            type="number"
+            min="1"
+            max="60"
+            step="1"
+            bind:value={config.idle_threshold_minutes}
+            on:change={() => {
+              config.idle_threshold_minutes = Math.max(1, Math.min(60, Number(config.idle_threshold_minutes) || 5));
+              handleChange();
+            }}
+            class="w-16 rounded-md border border-slate-200 bg-white px-2 py-1 text-center text-sm dark:border-slate-600 dark:bg-slate-800"
+          />
+          <span class="text-xs settings-subtle">{t('settingsGeneral.minutesUnit')}</span>
+        </div>
+      </div>
     </div>
 
     <!-- 日报设置 -->

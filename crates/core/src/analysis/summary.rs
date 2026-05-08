@@ -1,8 +1,12 @@
+use crate::analysis::report_blocks::{
+    render_app_usage_table, render_category_table, render_domain_usage_table,
+    render_hourly_summary, wrap_block, BLOCK_APP_USAGE_TABLE, BLOCK_CATEGORY_TABLE,
+    BLOCK_DOMAIN_USAGE_TABLE, BLOCK_HOURLY_SUMMARY,
+};
 use crate::analysis::{
     append_custom_prompt_for_locale, format_duration_for_locale, generate_activity_timeline,
     generate_hourly_activity_summary_for_locale, generate_session_timeline,
-    translate_category_name, translate_semantic_category_name, Analyzer, AppLocale,
-    GeneratedReport,
+    translate_semantic_category_name, Analyzer, AppLocale, GeneratedReport,
 };
 use crate::config::AiProvider;
 use crate::database::{Activity, DailyStats};
@@ -716,88 +720,31 @@ impl Analyzer for SummaryAnalyzer {
         }
 
         if !stats.category_usage.is_empty() {
-            match locale {
-                AppLocale::ZhCn => {
-                    report.push_str("## 二、时间分配\n\n| 类别 | 时长 | 占比 |\n|:--|--:|--:|\n");
-                }
-                AppLocale::ZhTw => {
-                    report.push_str("## 二、時間分配\n\n| 類別 | 時長 | 佔比 |\n|:--|--:|--:|\n");
-                }
-                AppLocale::En => {
-                    report.push_str(
-                        "## 2. Time Allocation\n\n| Category | Duration | Share |\n|:--|--:|--:|\n",
-                    );
-                }
-            }
-
-            for cat in &stats.category_usage {
-                let percentage = if stats.total_duration > 0 {
-                    (cat.duration as f64 / stats.total_duration as f64 * 100.0) as i32
-                } else {
-                    0
-                };
-                report.push_str(&format!(
-                    "| {} | {} | {}% |\n",
-                    translate_category_name(&cat.category, locale),
-                    format_duration_for_locale(cat.duration, locale),
-                    percentage
-                ));
-            }
-            report.push('\n');
+            report.push_str(&wrap_block(
+                BLOCK_CATEGORY_TABLE,
+                &render_category_table(stats, locale),
+            ));
         }
 
         if !stats.app_usage.is_empty() {
-            report.push_str(match locale {
-                AppLocale::ZhCn => {
-                    "## 三、应用使用明细\n\n| 序号 | 应用名称 | 使用时长 |\n|--:|:--|--:|\n"
-                }
-                AppLocale::ZhTw => {
-                    "## 三、應用使用明細\n\n| 序號 | 應用名稱 | 使用時長 |\n|--:|:--|--:|\n"
-                }
-                AppLocale::En => "## 3. App Details\n\n| # | App | Duration |\n|--:|:--|--:|\n",
-            });
-            for (index, app) in stats.app_usage.iter().enumerate() {
-                report.push_str(&format!(
-                    "| {} | {} | {} |\n",
-                    index + 1,
-                    app.app_name,
-                    format_duration_for_locale(app.duration, locale)
-                ));
-            }
-            report.push('\n');
+            report.push_str(&wrap_block(
+                BLOCK_APP_USAGE_TABLE,
+                &render_app_usage_table(stats, locale),
+            ));
         }
 
-        if let Some(hourly_summary) = generate_hourly_activity_summary_for_locale(stats, locale) {
-            report.push_str(match locale {
-                AppLocale::ZhCn => "## 四、按小时活跃度\n\n",
-                AppLocale::ZhTw => "## 四、按小時活躍度\n\n",
-                AppLocale::En => "## 4. Hourly Activity\n\n",
-            });
-            report.push_str(&hourly_summary);
-            report.push('\n');
+        if generate_hourly_activity_summary_for_locale(stats, locale).is_some() {
+            report.push_str(&wrap_block(
+                BLOCK_HOURLY_SUMMARY,
+                &render_hourly_summary(stats, locale),
+            ));
         }
 
         if !stats.domain_usage.is_empty() {
-            report.push_str(match locale {
-                AppLocale::ZhCn => {
-                    "## 五、网站访问明细\n\n| 序号 | 网站域名 | 访问时长 |\n|--:|:--|--:|\n"
-                }
-                AppLocale::ZhTw => {
-                    "## 五、網站造訪明細\n\n| 序號 | 網站網域 | 造訪時長 |\n|--:|:--|--:|\n"
-                }
-                AppLocale::En => {
-                    "## 5. Website Details\n\n| # | Domain | Duration |\n|--:|:--|--:|\n"
-                }
-            });
-            for (index, domain) in stats.domain_usage.iter().enumerate() {
-                report.push_str(&format!(
-                    "| {} | {} | {} |\n",
-                    index + 1,
-                    format_domain_label(domain, locale),
-                    format_duration_for_locale(domain.duration, locale)
-                ));
-            }
-            report.push('\n');
+            report.push_str(&wrap_block(
+                BLOCK_DOMAIN_USAGE_TABLE,
+                &render_domain_usage_table(stats, locale),
+            ));
         }
 
         report.push_str(match locale {

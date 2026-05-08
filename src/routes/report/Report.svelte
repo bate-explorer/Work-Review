@@ -220,6 +220,18 @@
     }
   }
 
+  // 把节点移到 document.body，规避祖先的 backdrop-filter / overflow 对 position:fixed 的干扰
+  function portal(node) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        if (node.parentNode === document.body) {
+          document.body.removeChild(node);
+        }
+      }
+    };
+  }
+
   async function exportReportMarkdown() {
     if (!report) return;
 
@@ -378,6 +390,13 @@
   });
 </script>
 
+<svelte:window on:click={(e) => {
+  if (!showPresetDropdown) return;
+  if (!e.target.closest('[data-preset-dropdown]') && !e.target.closest('[data-preset-toggle]')) {
+    showPresetDropdown = false;
+  }
+}} />
+
 <div class="page-shell report-editorial-shell" data-locale={currentLocale}>
   <!-- 页面标题 -->
   <div class="report-hero">
@@ -491,13 +510,8 @@
             <svg class="w-3.5 h-3.5 transition-transform {showPresetDropdown ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
           </button>
           {#if showPresetDropdown}
-            <svelte:window on:click={(e) => {
-              if (!e.target.closest('[data-preset-dropdown]') && !e.target.closest('[data-preset-toggle]')) {
-                showPresetDropdown = false;
-              }
-            }} />
             <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <div data-preset-dropdown style={dropdownStyle} class="z-50 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-xl overscroll-contain" on:wheel={(e) => { e.stopPropagation(); e.preventDefault(); e.currentTarget.scrollTop += e.deltaY; }} on:touchmove|stopPropagation>
+            <div use:portal data-preset-dropdown style={dropdownStyle} class="z-50 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-xl overscroll-contain" on:wheel={(e) => { e.stopPropagation(); e.preventDefault(); e.currentTarget.scrollTop += e.deltaY; }} on:touchmove|stopPropagation>
               <div class="py-1">
                 {#each (config?.daily_report_prompt_presets || []) as preset, i}
                   <div class="flex items-center px-1">

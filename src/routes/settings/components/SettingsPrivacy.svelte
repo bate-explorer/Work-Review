@@ -14,6 +14,7 @@
   let showAppInput = false;
   let selectedApp = '';
   let selectedLevel = 'ignored';
+  let batchSelectedApps = new Set();
   let showKeywordInput = false;
   let newKeyword = '';
   let showDomainInput = false;
@@ -35,21 +36,22 @@
   }
 
   function addAppRule() {
-    if (!selectedApp) return;
-    // 检查是否已存在同名规则
-    const existingIndex = config.privacy.app_rules.findIndex(r => r.app_name === selectedApp);
-    if (existingIndex >= 0) {
-      // 更新已有规则
-      config.privacy.app_rules[existingIndex].level = selectedLevel;
-      config.privacy.app_rules = [...config.privacy.app_rules];
-    } else {
-      config.privacy.app_rules = [
-        ...config.privacy.app_rules,
-        { app_name: selectedApp, level: selectedLevel }
-      ];
+    const appsToAdd = new Set(batchSelectedApps);
+    if (selectedApp) appsToAdd.add(selectedApp);
+    if (appsToAdd.size === 0) return;
+    let rules = [...config.privacy.app_rules];
+    for (const appName of appsToAdd) {
+      const existingIndex = rules.findIndex(r => r.app_name === appName);
+      if (existingIndex >= 0) {
+        rules[existingIndex].level = selectedLevel;
+      } else {
+        rules.push({ app_name: appName, level: selectedLevel });
+      }
     }
+    config.privacy.app_rules = rules;
     showAppInput = false;
     selectedApp = '';
+    batchSelectedApps = new Set();
     dispatch('change', config);
   }
 
@@ -105,9 +107,14 @@
     dispatch('change', config);
   }
 
-  // 快捷选择应用
-  function selectApp(appName) {
-    selectedApp = appName;
+  // 快捷选择应用（多选切换）
+  function toggleBatchApp(appName) {
+    if (batchSelectedApps.has(appName)) {
+      batchSelectedApps.delete(appName);
+    } else {
+      batchSelectedApps.add(appName);
+    }
+    batchSelectedApps = batchSelectedApps; // 触发响应式更新
   }
 </script>
 
@@ -174,13 +181,13 @@
               <div class="flex flex-wrap gap-1.5">
                 {#each recentApps.slice(0, 12) as app}
                   <button
-                    on:click={() => selectApp(app)}
+                    on:click={() => toggleBatchApp(app)}
                     class="settings-chip-button
-                           {selectedApp === app 
+                           {batchSelectedApps.has(app)
                              ? 'settings-chip-button-active'
                              : ''}"
                   >
-                    {app}
+                    {batchSelectedApps.has(app) ? '✓ ' : ''}{app}
                   </button>
                 {/each}
               </div>
@@ -193,13 +200,13 @@
               <div class="flex flex-wrap gap-1.5">
                 {#each runningApps.slice(0, 8) as app}
                   <button
-                    on:click={() => selectApp(app)}
+                    on:click={() => toggleBatchApp(app)}
                     class="settings-chip-button
-                           {selectedApp === app 
+                           {batchSelectedApps.has(app)
                              ? 'settings-chip-button-active'
                              : ''}"
                   >
-                    {app}
+                    {batchSelectedApps.has(app) ? '✓ ' : ''}{app}
                   </button>
                 {/each}
               </div>
@@ -219,9 +226,11 @@
             <button
               on:click={addAppRule}
               class="settings-action-primary"
-              disabled={!selectedApp}
+              disabled={!selectedApp && batchSelectedApps.size === 0}
             >
-              {t('settingsPrivacy.addRuleAction')}
+              {batchSelectedApps.size > 1
+                ? t('settingsPrivacy.batchAdd', { count: batchSelectedApps.size })
+                : t('settingsPrivacy.addRuleAction')}
             </button>
           </div>
         </div>

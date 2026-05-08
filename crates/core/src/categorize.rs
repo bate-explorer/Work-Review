@@ -50,7 +50,8 @@ pub fn is_system_process(app_name: &str) -> bool {
 /// 判断进程名是否属于浏览器
 pub fn is_browser_app(app_name: &str) -> bool {
     let app_lower = app_name.to_lowercase();
-    app_lower.contains("chrome")
+    // 子串匹配：这些片段足够独特，不会被其它常见应用名误命中
+    let substring_match = app_lower.contains("chrome")
         || app_lower.contains("msedge")
         || app_lower.contains("microsoft edge")
         || app_lower.contains("brave")
@@ -58,7 +59,6 @@ pub fn is_browser_app(app_name: &str) -> bool {
         || app_lower.contains("vivaldi")
         || app_lower.contains("firefox")
         || app_lower.contains("safari")
-        || app_lower.contains("arc")
         || app_lower.contains("orion")
         || app_lower.contains("zen browser")
         || app_lower.contains("browser")
@@ -73,8 +73,17 @@ pub fn is_browser_app(app_name: &str) -> bool {
         || app_lower.contains("liebao")
         || app_lower.contains("maxthon")
         || app_lower.contains("theworld")
-        || app_lower.contains("cent")
-        || app_lower.contains("iexplore")
+        || app_lower.contains("iexplore");
+    if substring_match {
+        return true;
+    }
+    // 精确匹配：避免短关键字误中其它应用
+    //   - "cent" 之前用 contains() 会把 "Tencent Lemon" / "Tencent Meeting" 等误判为浏览器
+    //   - "arc" 同理（"Arch Linux" 等 .exe 都会误中）
+    matches!(
+        app_lower.as_str(),
+        "cent" | "cent browser" | "centbrowser" | "arc"
+    )
 }
 
 /// 统一应用显示名称，避免不同来源（进程名、数据库历史、运行中列表）出现重复项
@@ -268,6 +277,22 @@ pub fn normalize_display_app_name(app_name: &str) -> String {
         "eog" | "org.gnome.eog" => "Eye of GNOME".to_string(),
         "gedit" | "org.gnome.gedit" => "gedit".to_string(),
         "calibre" | "calibre-gui" => "Calibre".to_string(),
+        // ── 系统工具 ──
+        "lemon" | "tencent lemon" => "Tencent Lemon".to_string(),
+        "cleanmymac" | "clean my mac" => "CleanMyMac".to_string(),
+        "alfred" => "Alfred".to_string(),
+        "raycast" => "Raycast".to_string(),
+        "bartender" => "Bartender".to_string(),
+        "istat menus" | "istat" => "iStat Menus".to_string(),
+        "appcleaner" | "app cleaner" => "AppCleaner".to_string(),
+        "the unarchiver" | "unarchiver" => "The Unarchiver".to_string(),
+        "keka" => "Keka".to_string(),
+        "daisydisk" => "DaisyDisk".to_string(),
+        "onyx" => "OnyX".to_string(),
+        "sensei" => "Sensei".to_string(),
+        "rectangle" => "Rectangle".to_string(),
+        "magnet" => "Magnet".to_string(),
+        "stats" => "Stats".to_string(),
         _ => trimmed.to_string(),
     }
 }
@@ -808,5 +833,42 @@ pub fn get_category_name(category: &str) -> &str {
         "design" => "设计工具",
         "entertainment" => "娱乐",
         _ => "其他",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_browser_app_recognises_common_browsers() {
+        assert!(is_browser_app("Google Chrome"));
+        assert!(is_browser_app("Microsoft Edge"));
+        assert!(is_browser_app("Firefox"));
+        assert!(is_browser_app("Safari"));
+        assert!(is_browser_app("QQ Browser"));
+    }
+
+    #[test]
+    fn is_browser_app_rejects_apps_with_substrings_that_used_to_false_match() {
+        // 回归测试：之前 contains("cent") 让 "Tencent Lemon" 等被识别为浏览器，
+        // 进而被收进日报的"网站访问明细"。同理 contains("arc") 误中 "Arch Linux"。
+        assert!(!is_browser_app("Tencent Lemon"));
+        assert!(!is_browser_app("Tencent Meeting"));
+        assert!(!is_browser_app("WeCom"));
+        assert!(!is_browser_app("Arch Linux"));
+        assert!(!is_browser_app("Spotlight Search"));
+        // 真正的 Cent / Arc 浏览器仍然能识别
+        assert!(is_browser_app("Cent"));
+        assert!(is_browser_app("Cent Browser"));
+        assert!(is_browser_app("Arc"));
+    }
+
+    #[test]
+    fn normalize_display_app_name_returns_canonical_for_tencent_lemon() {
+        // 显示名归一化在 categorize.rs 与 monitor.rs 各有一份，确保腾讯柠檬走到这条规则
+        assert_eq!(normalize_display_app_name("Lemon"), "Tencent Lemon");
+        assert_eq!(normalize_display_app_name("Tencent Lemon"), "Tencent Lemon");
+        assert_eq!(normalize_display_app_name("LEMON.exe"), "Tencent Lemon");
     }
 }

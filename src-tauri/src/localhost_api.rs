@@ -583,21 +583,18 @@ async fn route_request(
     }
 
     let result = match (request.method.as_str(), request.path.as_str()) {
-        ("POST", "/v1/reports/generate") => {
-            match parse_json_body::<GenerateReportRequest>(&request) {
-                Ok(body) => {
-                    commands::generate_report_inner(body.date, body.force, body.locale, app, state)
-                        .await
-                        .map(|content| {
-                            HttpResponse::json(
-                                200,
-                                &serde_json::json!({
-                                    "content": content,
-                                }),
-                            )
-                        })
-                }
-                Err(err) => Err(err),
+        ("GET", "/v1/reports/generate") => {
+            let date = request.query.get("date").cloned().unwrap_or_default();
+            let force = request.query.get("force").and_then(|v| v.parse().ok());
+            let locale = request.query.get("locale").cloned();
+            if date.is_empty() {
+                Err(AppError::Config("date 参数不能为空".to_string()))
+            } else {
+                commands::generate_report_inner(date, force, locale, app, state)
+                    .await
+                    .map(|content| {
+                        HttpResponse::json(200, &serde_json::json!({ "content": content }))
+                    })
             }
         }
         ("POST", "/v1/reports/export-markdown") => parse_json_body::<ExportReportRequest>(&request)
@@ -650,6 +647,36 @@ async fn route_request(
             }
         }
         ("GET", "/v1/device") => handle_device_info(state),
+        ("GET", "/v1/weekly-review") => {
+            let date_from = request.query.get("date_from").cloned();
+            let date_to = request.query.get("date_to").cloned();
+            let limit = request.query.get("limit").and_then(|v| v.parse().ok());
+            commands::generate_weekly_review_inner(date_from, date_to, limit, state)
+                .map(|result| HttpResponse::json(200, &result))
+        }
+        _ if request.method == "GET" && request.path.starts_with("/v1/timeline/") => {
+            let date = request.path.trim_start_matches("/v1/timeline/").trim();
+            if date.is_empty() {
+                Err(AppError::Config("时间线日期不能为空".to_string()))
+            } else {
+                let limit = request.query.get("limit").and_then(|v| v.parse().ok());
+                let offset = request.query.get("offset").and_then(|v| v.parse().ok());
+                commands::get_timeline_inner(date.to_string(), limit, offset, state)
+                    .map(|activities| HttpResponse::json(200, &activities))
+            }
+        }
+        _ if request.method == "GET" && request.path.starts_with("/v1/hourly-app-breakdown/") => {
+            let date = request.path.trim_start_matches("/v1/hourly-app-breakdown/").trim();
+            if date.is_empty() {
+                Err(AppError::Config("日期不能为空".to_string()))
+            } else {
+                match state.lock() {
+                    Ok(s) => s.database.get_hourly_app_breakdown(date)
+                        .map(|result| HttpResponse::json(200, &result)),
+                    Err(e) => Err(AppError::Unknown(e.to_string())),
+                }
+            }
+        }
         ("GET", "/health") => {
             let guard = state.lock().map_err(|e| AppError::Unknown(e.to_string()));
             match guard {
@@ -773,6 +800,48 @@ mod tests {
     fn 鉴权模式应将其余路由标记为本地api_token鉴权() {
         assert_eq!(
             request_auth_mode("GET", "/v1/device"),
+            RequestAuthMode::LocalApiToken
+        );
+    }
+
+    #[test]
+    fn 周报路由应被纳入本地api_token鉴权() {
+        // /v1/weekly-review 不在 None 白名单里，应当回落到默认的 LocalApiToken。
+        assert_eq!(
+            request_auth_mode("GET", "/v1/weekly-review"),
+            RequestAuthMode::LocalApiToken
+        );
+    }
+
+    #[test]
+    fn 时间线路由各种日期形态都应触发鉴权() {
+        // 防止某些日期格式误命中 None 白名单（白名单仅 /health 与 /feishu/event）。
+        for path in [
+            "/v1/timeline/2026-05-08",
+            "/v1/timeline/2026-01-01",
+            "/v1/timeline/", // 空日期：路由处理器会自行返回 400，但鉴权仍应触发
+        ] {
+            assert_eq!(
+                request_auth_mode("GET", path),
+                RequestAuthMode::LocalApiToken,
+                "路径 {path} 应需要本地 API token"
+            );
+        }
+    }
+
+    #[test]
+    fn 健康检查与飞书事件外的所有方法都应被鉴权() {
+        // 巩固现有契约：白名单是 {GET /health, POST /feishu/event}，其它一切 = LocalApiToken。
+        assert_eq!(
+            request_auth_mode("POST", "/v1/weekly-review"),
+            RequestAuthMode::LocalApiToken
+        );
+        assert_eq!(
+            request_auth_mode("DELETE", "/v1/timeline/2026-05-08"),
+            RequestAuthMode::LocalApiToken
+        );
+        assert_eq!(
+            request_auth_mode("GET", "/v1/anything-new-we-add-later"),
             RequestAuthMode::LocalApiToken
         );
     }

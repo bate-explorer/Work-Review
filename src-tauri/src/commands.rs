@@ -6,7 +6,7 @@ use crate::config::{
 use crate::database::Database;
 use crate::database::{
     Activity, AppUsage, BrowserUsage, CategoryUsage, DailyReport, DailyStats, DomainUsage,
-    HourlyActivityBucket, MemorySearchItem, UrlDetail, UrlUsage,
+    HourlyActivityBucket, HourlyAppBucket, MemorySearchItem, UrlDetail, UrlUsage,
 };
 use crate::error::AppError;
 #[cfg(target_os = "linux")]
@@ -3261,18 +3261,24 @@ pub async fn get_daily_stats(
 ) -> Result<DailyStats, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
     let segments = state.config.effective_work_segments();
-    state
+    let raw_stats = state
         .database
-        .get_daily_stats_with_segments(&date, &segments)
+        .get_daily_stats_with_segments(&date, &segments)?;
+    // 与 get_overview_stats / generate_report_inner 保持口径一致：应用隐私过滤
+    let (ignored_apps, excluded_domains) = collect_privacy_filters(&state);
+    let stats = apply_excluded_domains_to_stats(
+        apply_ignored_apps_to_stats(raw_stats, &ignored_apps),
+        &excluded_domains,
+    );
+    Ok(stats)
 }
 
-/// 获取指定日期的时间线
-#[tauri::command]
-pub async fn get_timeline(
+/// 获取指定日期的时间线 —— 内部复用版（供 Tauri 命令与 localhost API 共用）
+pub(crate) fn get_timeline_inner(
     date: String,
     limit: Option<u32>,
     offset: Option<u32>,
-    state: State<'_, Arc<Mutex<AppState>>>,
+    state: &Arc<Mutex<AppState>>,
 ) -> Result<Vec<Activity>, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
     let activities = state.database.get_timeline(&date, limit, offset)?;
@@ -3289,6 +3295,27 @@ pub async fn get_timeline(
     }
 
     Ok(filtered)
+}
+
+/// 获取指定日期的时间线
+#[tauri::command]
+pub async fn get_timeline(
+    date: String,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<Activity>, AppError> {
+    get_timeline_inner(date, limit, offset, state.inner())
+}
+
+/// 获取每小时×应用的时长分布
+#[tauri::command]
+pub async fn get_hourly_app_breakdown(
+    date: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<HourlyAppBucket>, AppError> {
+    let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
+    state.database.get_hourly_app_breakdown(&date)
 }
 
 fn collect_privacy_filters(state: &AppState) -> (Vec<String>, Vec<String>) {
@@ -3711,13 +3738,12 @@ pub async fn recognize_work_intents(
     Ok(analyze_intents(&activities))
 }
 
-/// 生成周报 / 阶段复盘
-#[tauri::command]
-pub async fn generate_weekly_review(
+/// 生成周报 / 阶段复盘 —— 内部复用版（供 Tauri 命令与 localhost API 共用）
+pub(crate) fn generate_weekly_review_inner(
     date_from: Option<String>,
     date_to: Option<String>,
     limit: Option<u32>,
-    state: State<'_, Arc<Mutex<AppState>>>,
+    state: &Arc<Mutex<AppState>>,
 ) -> Result<WeeklyReviewResult, AppError> {
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
     let activities = load_filtered_activities_in_range(
@@ -3732,6 +3758,17 @@ pub async fn generate_weekly_review(
         date_from.as_deref(),
         date_to.as_deref(),
     ))
+}
+
+/// 生成周报 / 阶段复盘
+#[tauri::command]
+pub async fn generate_weekly_review(
+    date_from: Option<String>,
+    date_to: Option<String>,
+    limit: Option<u32>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<WeeklyReviewResult, AppError> {
+    generate_weekly_review_inner(date_from, date_to, limit, state.inner())
 }
 
 /// 提取待跟进事项
@@ -4002,9 +4039,30 @@ pub(crate) fn get_saved_report_inner(
 ) -> Result<Option<DailyReport>, AppError> {
     let report_locale = AppLocale::from_option(locale.as_deref());
     let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
-    state
+    let saved = state
         .database
-        .get_report(&date, Some(report_locale.as_code()))
+        .get_report(&date, Some(report_locale.as_code()))?;
+    let Some(mut report) = saved else {
+        return Ok(None);
+    };
+
+    // 用最新的 stats 重新渲染统计区块，解决 issue #80：保存的 markdown 里固化的时长
+    // 数字会随着工作日继续推进而变得陈旧。老报告若没有占位符标记则原样返回。
+    let segments = state.config.effective_work_segments();
+    if let Ok(raw_stats) = state.database.get_daily_stats_with_segments(&date, &segments) {
+        let (ignored_apps, excluded_domains) = collect_privacy_filters(&state);
+        let live_stats = apply_excluded_domains_to_stats(
+            apply_ignored_apps_to_stats(raw_stats, &ignored_apps),
+            &excluded_domains,
+        );
+        report.content = crate::analysis::report_blocks::render_report_with_live_stats(
+            &report.content,
+            &live_stats,
+            report_locale,
+        );
+    }
+
+    Ok(Some(report))
 }
 
 #[tauri::command]

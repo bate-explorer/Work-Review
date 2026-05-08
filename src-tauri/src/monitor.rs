@@ -167,7 +167,7 @@ pub fn is_system_process(app_name: &str) -> bool {
 /// 判断进程名是否属于浏览器
 pub fn is_browser_app(app_name: &str) -> bool {
     let app_lower = app_name.to_lowercase();
-    app_lower.contains("chrome")
+    let substring_match = app_lower.contains("chrome")
         || app_lower.contains("msedge")
         || app_lower.contains("microsoft edge")
         || app_lower.contains("brave")
@@ -175,7 +175,6 @@ pub fn is_browser_app(app_name: &str) -> bool {
         || app_lower.contains("vivaldi")
         || app_lower.contains("firefox")
         || app_lower.contains("safari")
-        || app_lower.contains("arc")
         || app_lower.contains("orion")
         || app_lower.contains("zen browser")
         || app_lower.contains("browser")
@@ -190,8 +189,16 @@ pub fn is_browser_app(app_name: &str) -> bool {
         || app_lower.contains("liebao")
         || app_lower.contains("maxthon")
         || app_lower.contains("theworld")
-        || app_lower.contains("cent")
-        || app_lower.contains("iexplore")
+        || app_lower.contains("iexplore");
+    if substring_match {
+        return true;
+    }
+    // 与 work_review_core::categorize::is_browser_app 保持一致：
+    //   "cent" / "arc" 用精确匹配，避免 "Tencent Lemon" / "Arch Linux" 等被误判为浏览器
+    matches!(
+        app_lower.as_str(),
+        "cent" | "cent browser" | "centbrowser" | "arc"
+    )
 }
 
 /// 清理浏览器窗口标题中的内部页面信息。
@@ -507,6 +514,31 @@ pub fn normalize_display_app_name(app_name: &str) -> String {
         "eog" | "org.gnome.eog" => "Eye of GNOME".to_string(),
         "gedit" | "org.gnome.gedit" => "gedit".to_string(),
         "calibre" | "calibre-gui" => "Calibre".to_string(),
+        // ── 系统工具 ──
+        "lemon" | "tencent lemon" => "Tencent Lemon".to_string(),
+        "cleanmymac" | "clean my mac" => "CleanMyMac".to_string(),
+        "alfred" => "Alfred".to_string(),
+        "raycast" => "Raycast".to_string(),
+        "bartender" => "Bartender".to_string(),
+        "istat menus" | "istat" => "iStat Menus".to_string(),
+        "appcleaner" | "app cleaner" => "AppCleaner".to_string(),
+        "the unarchiver" | "unarchiver" => "The Unarchiver".to_string(),
+        "keka" => "Keka".to_string(),
+        "daisydisk" => "DaisyDisk".to_string(),
+        "onyx" => "OnyX".to_string(),
+        "macpaw" => "MacPaw".to_string(),
+        "sensei" => "Sensei".to_string(),
+        "peak" => "Peak".to_string(),
+        "ninjaclean" | "ninja clean" => "Ninja Clean".to_string(),
+        "applink" => "AppLink".to_string(),
+        "eqmac" => "eqMac".to_string(),
+        "rectangle" => "Rectangle".to_string(),
+        "magnet" => "Magnet".to_string(),
+        "spectacle" => "Spectacle".to_string(),
+        "amethyst" => "Amethyst".to_string(),
+        "yabai" => "yabai".to_string(),
+        "stats" => "Stats".to_string(),
+        "monitor" => "Monitor".to_string(),
         _ => trimmed.to_string(),
     }
 }
@@ -1743,6 +1775,22 @@ mod tests {
         assert!(is_browser_app("Sogou Browser"));
         assert!(is_browser_app("Safari"));
         assert!(!is_browser_app("Code.exe"));
+    }
+
+    #[test]
+    fn 浏览器识别不应被tencent等子串误中() {
+        // 回归测试：之前 contains("cent") 把 "Tencent Lemon" 等所有腾讯系应用都误判为浏览器，
+        // 导致它们出现在日报"网站访问明细"里。
+        assert!(!is_browser_app("Tencent Lemon"));
+        assert!(!is_browser_app("Tencent Meeting"));
+        assert!(!is_browser_app("WeChat")); // 与 cent 无关，但同属腾讯系
+        // arc 也类似（之前 contains("arc") 会误中 "Arch Linux"、"Search" 等）
+        assert!(!is_browser_app("Arch Linux"));
+        assert!(!is_browser_app("Spotlight Search"));
+        // 真正的 Cent / Arc 浏览器仍然识别得到
+        assert!(is_browser_app("Cent"));
+        assert!(is_browser_app("Cent Browser"));
+        assert!(is_browser_app("Arc"));
     }
 
     #[test]

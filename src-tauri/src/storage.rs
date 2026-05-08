@@ -70,6 +70,11 @@ impl StorageManager {
 
     /// 清理过期截图
     fn cleanup_old_screenshots(&self) -> Result<u32> {
+        // 0 表示"永久保留"——直接跳过基于时间的清理（存储上限那条另算）
+        if self.config.screenshot_retention_days == 0 {
+            return Ok(0);
+        }
+
         let screenshots_dir = self.data_dir.join("screenshots");
         if !screenshots_dir.exists() {
             return Ok(0);
@@ -112,6 +117,11 @@ impl StorageManager {
     /// 清理过期 OCR 日志文件
     /// 日志文件格式: ocr_logs/YYYY-MM-DD.txt，与截图使用相同的保留天数
     fn cleanup_old_ocr_logs(&self) -> Result<u32> {
+        // 0 表示"永久保留"——与 cleanup_old_screenshots 保持一致
+        if self.config.screenshot_retention_days == 0 {
+            return Ok(0);
+        }
+
         let ocr_dir = self.data_dir.join("ocr_logs");
         if !ocr_dir.exists() {
             return Ok(0);

@@ -568,6 +568,9 @@ pub struct WorkTimeSegment {
 pub struct AppConfig {
     /// 截屏间隔（秒）
     pub screenshot_interval: u64,
+    /// 空闲检测阈值（分钟）：超过此时间无键鼠输入则进入疑似空闲
+    #[serde(default = "default_idle_threshold_minutes")]
+    pub idle_threshold_minutes: u32,
     /// AI分析模式
     pub ai_mode: AiMode,
     /// 文本模型配置
@@ -681,6 +684,9 @@ pub struct AppConfig {
     /// 例：[{start_hour:9,start_minute:0,end_hour:12,end_minute:0},{start_hour:13,start_minute:0,end_hour:18,end_minute:0}]
     #[serde(default)]
     pub work_time_segments: Vec<WorkTimeSegment>,
+    /// 是否启用工作时间过滤。关闭后所有活动都算"工作时间"，不再区分
+    #[serde(default = "default_true")]
+    pub work_time_enabled: bool,
 
     // 兼容旧版配置
     #[serde(default)]
@@ -775,6 +781,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             screenshot_interval: 30,
+            idle_threshold_minutes: default_idle_threshold_minutes(),
             ai_mode: AiMode::Local,
             text_model: ModelConfig::default_text(),
             text_model_profiles: Vec::new(),
@@ -826,6 +833,7 @@ impl Default for AppConfig {
                     end_minute: 0,
                 },
             ],
+            work_time_enabled: true,
             // 旧版兼容字段
             ai_provider: AiProviderConfig::default(),
             ollama_host: "http://localhost:11434".to_string(),
@@ -864,6 +872,7 @@ impl AppConfig {
         );
         normalize_custom_semantic_categories(&mut self.custom_semantic_categories);
         self.screenshot_interval = normalize_screenshot_interval(self.screenshot_interval);
+        self.idle_threshold_minutes = normalize_idle_threshold_minutes(self.idle_threshold_minutes);
         self.avatar_scale = normalize_avatar_scale(self.avatar_scale);
         self.avatar_opacity = normalize_avatar_opacity(self.avatar_opacity);
         self.avatar_preset = normalize_avatar_preset(&self.avatar_preset);
@@ -963,8 +972,18 @@ impl AppConfig {
     }
 
     /// 获取有效的工作时间段列表
-    /// 优先使用 work_time_segments，为空则从旧字段构造一段
+    /// - work_time_enabled=false: 返回全天段 (0:00-23:59)，所有活动都算工作时间
+    /// - work_time_enabled=true + segments 非空: 使用自定义时间段
+    /// - work_time_enabled=true + segments 为空: 从旧字段构造一段
     pub fn effective_work_segments(&self) -> Vec<WorkTimeSegment> {
+        if !self.work_time_enabled {
+            return vec![WorkTimeSegment {
+                start_hour: 0,
+                start_minute: 0,
+                end_hour: 23,
+                end_minute: 59,
+            }];
+        }
         if !self.work_time_segments.is_empty() {
             return self.work_time_segments.clone();
         }
@@ -1265,6 +1284,14 @@ fn normalize_break_reminder_interval_minutes(value: u64) -> u64 {
 /// 截屏间隔最低 5 秒，防止配置值过小导致 CPU/磁盘占用过高
 fn normalize_screenshot_interval(value: u64) -> u64 {
     value.clamp(5, 600)
+}
+
+fn default_idle_threshold_minutes() -> u32 {
+    5
+}
+
+fn normalize_idle_threshold_minutes(value: u32) -> u32 {
+    value.clamp(1, 60)
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {

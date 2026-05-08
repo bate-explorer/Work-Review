@@ -630,6 +630,8 @@
               { label: 'GET /v1/reports', desc: t('nodeGatewayPage.exampleReportsDesc'), cmd: curlCommand('GET', '/v1/reports') },
               { label: 'GET /v1/reports/:date', desc: t('nodeGatewayPage.exampleReportByDateDesc'), cmd: curlCommand('GET', '/v1/reports/2025-01-15') },
               { label: 'POST /v1/reports/generate', desc: t('nodeGatewayPage.exampleGenerateDesc'), cmd: curlCommand('POST', '/v1/reports/generate', { date: '2025-01-15' }) },
+              { label: 'GET /v1/timeline/:date', desc: t('nodeGatewayPage.exampleTimelineDesc'), cmd: curlCommand('GET', '/v1/timeline/2025-01-15') },
+              { label: 'GET /v1/weekly-review', desc: t('nodeGatewayPage.exampleWeeklyReviewDesc'), cmd: curlCommand('GET', '/v1/weekly-review?date_from=2025-01-13&date_to=2025-01-19') },
             ] as example}
             <div class="flex items-start justify-between gap-2 rounded-lg bg-white/70 px-3 py-1.5 ring-1 ring-slate-200/70 dark:bg-slate-900/20 dark:ring-slate-700/70">
               <div class="min-w-0 flex-1">

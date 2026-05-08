@@ -21,6 +21,7 @@
   let screenshotIntervalLabel = '';
   let retentionDaysLabel = '';
   let storageRetentionLabel = '';
+  let keepForever = false;
   const screenshotModes = [
     {
       value: 'active_window',
@@ -199,6 +200,7 @@
     currentLocale;
     screenshotIntervalLabel = t('settingsStorage.secondsValue', { count: config?.screenshot_interval ?? 0 });
     retentionDaysLabel = t('settingsStorage.daysValue', { count: config?.storage?.screenshot_retention_days ?? 0 });
+    keepForever = config?.storage?.screenshot_retention_days === 0;
     storageRetentionLabel = t('settingsStorage.daysValue', { count: storageStats?.retention_days ?? 0 });
   }
   $: if (cleanupCandidateDir && cleanupCandidateDir === dataDir) {
@@ -233,13 +235,30 @@
     <div class="settings-block">
       <div class="flex items-center justify-between">
         <label for="screenshot-interval" class="settings-text">{t('settingsStorage.pollingInterval')}</label>
-        <span class="settings-value">{screenshotIntervalLabel}</span>
+        <div class="flex items-center gap-2">
+          <input
+            type="number"
+            min="5"
+            max="600"
+            step="5"
+            bind:value={config.screenshot_interval}
+            on:change={() => {
+              config.screenshot_interval = Math.max(5, Math.min(600, Number(config.screenshot_interval) || 30));
+              handleChange();
+            }}
+            class="w-16 rounded-md border border-slate-200 bg-white px-2 py-1 text-center text-sm dark:border-slate-600 dark:bg-slate-800"
+          />
+          <span class="text-xs settings-subtle">{t('settingsStorage.secondsUnit')}</span>
+        </div>
       </div>
       <input
         id="screenshot-interval"
         type="range"
         bind:value={config.screenshot_interval}
-        on:change={handleChange}
+        on:change={() => {
+          config.screenshot_interval = Math.max(5, Math.min(600, Number(config.screenshot_interval) || 30));
+          handleChange();
+        }}
         min="10"
         max="120"
         step="5"
@@ -255,25 +274,60 @@
     <div class="settings-block">
       <div class="flex items-center justify-between">
         <label for="retention-days" class="settings-text">{t('settingsStorage.retentionDays')}</label>
-        <span class="settings-value">{retentionDaysLabel}</span>
+        <div class="flex items-center gap-2">
+          <label class="flex items-center gap-1.5 text-xs settings-subtle cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={keepForever}
+              on:click={() => {
+                if (!keepForever) {
+                  config.storage.screenshot_retention_days = 0;
+                } else {
+                  config.storage.screenshot_retention_days = 7;
+                }
+                handleChange();
+              }}
+              class="rounded border-slate-300 dark:border-slate-600"
+            />
+            {t('settingsStorage.keepForever')}
+          </label>
+          {#if !keepForever}
+            <input
+              type="number"
+              min="1"
+              max="9999"
+              step="1"
+              bind:value={config.storage.screenshot_retention_days}
+              on:change={() => {
+                config.storage.screenshot_retention_days = Math.max(1, Number(config.storage.screenshot_retention_days) || 7);
+                handleChange();
+              }}
+              class="w-16 rounded-md border border-slate-200 bg-white px-2 py-1 text-center text-sm dark:border-slate-600 dark:bg-slate-800"
+            />
+          {:else}
+            <span class="settings-value">∞</span>
+          {/if}
+        </div>
       </div>
-      <input
-        id="retention-days"
-        type="range"
-        bind:value={config.storage.screenshot_retention_days}
-        on:change={() => {
-          config.storage.metadata_retention_days = config.storage.screenshot_retention_days;
-          handleChange();
-        }}
-        min="1"
-        max="90"
-        step="1"
-        class="range-input"
-      />
-      <div class="flex justify-between text-xs settings-subtle">
-        <span>{t('settingsStorage.retentionMin')}</span>
-        <span>{t('settingsStorage.retentionMax')}</span>
-      </div>
+      {#if !keepForever}
+        <input
+          id="retention-days"
+          type="range"
+          bind:value={config.storage.screenshot_retention_days}
+          on:change={() => {
+            config.storage.screenshot_retention_days = Math.max(1, Number(config.storage.screenshot_retention_days) || 7);
+            handleChange();
+          }}
+          min="1"
+          max="90"
+          step="1"
+          class="range-input"
+        />
+        <div class="flex justify-between text-xs settings-subtle">
+          <span>{t('settingsStorage.retentionMin')}</span>
+          <span>{t('settingsStorage.retentionMax')}</span>
+        </div>
+      {/if}
     </div>
 
     <div class="settings-block">
