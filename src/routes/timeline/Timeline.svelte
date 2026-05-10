@@ -113,6 +113,42 @@
   let newCategoryColor = '#6366f1';
   let newCategoryIcon = '🏷️';
 
+  // 重命名分类
+  let showRenameCategory = false;
+  let renameCategoryKey = '';
+  let renameCategoryName = '';
+  let renameCategoryColor = '#6366f1';
+  let renameCategoryIcon = '🏷️';
+
+  function startRenameCategory(cat) {
+    renameCategoryKey = cat.key;
+    renameCategoryName = cat.name;
+    renameCategoryColor = cat.color;
+    renameCategoryIcon = cat.icon;
+    showRenameCategory = true;
+  }
+
+  async function saveRenameCategory() {
+    const name = renameCategoryName.trim();
+    if (!name) return;
+    categorySaving = true;
+    try {
+      await invoke('save_custom_category', {
+        key: renameCategoryKey,
+        name,
+        color: renameCategoryColor,
+        icon: renameCategoryIcon,
+      });
+      await categoryStore.refresh();
+      showRenameCategory = false;
+      showToast(t('timeline.categoryRenamed'), 'success');
+    } catch (e) {
+      showToast(e.toString(), 'error');
+    } finally {
+      categorySaving = false;
+    }
+  }
+
   // 创建分类后的应用确认（内联渲染，确保在详情弹窗之上）
   let pendingApplyCategory = null; // { key, name }
   function cancelApplyCategory() { pendingApplyCategory = null; }
@@ -203,17 +239,10 @@
   }
 
   function getCategoryDisplayName(cat) {
-    // 内置分类用 i18n 翻译，自定义分类用用户输入的名称
-    if (cat.is_custom) return cat.name;
-    return translateCategoryLabel(cat.key);
-  }
-
-  function isCustomCategory(info) {
-    return info.isCustom;
+    return cat.name || translateCategoryLabel(cat.key);
   }
 
   function iconStyle(info) {
-    if (!info.isCustom) return '';
     return `background: ${hexToRGBA(info.color, 0.95)}`;
   }
 
@@ -537,7 +566,11 @@
 
       if (moreActivities.length > 0) {
         const prepared = prepareTimelineActivities(moreActivities);
-        activities = [...activities, ...prepared];
+        // Deduplicate against existing activities (offset drift from real-time updates)
+        const existingIds = new Set(activities.map(a => a.id));
+        const newItems = prepared.filter(a => !existingIds.has(a.id));
+        activities = [...activities, ...newItems];
+        // Always increment by full fetched count to keep DB pagination in sync
         offset += moreActivities.length;
         // 预加载新图片
         moreActivities.forEach(a => loadThumbnail(a.screenshot_path));
@@ -843,7 +876,7 @@
                 <div class="timeline-featured-copy">
                   <div class="timeline-entry-meta timeline-entry-meta-featured">
                     <div class="timeline-entry-app">
-                      <div class={`timeline-app-icon ${info.isCustom ? '' : `timeline-app-icon-${info.color}`}`}
+                      <div class="timeline-app-icon"
                            style={iconStyle(info)}>
                         {#if getTimelineIconSrc(activity)}
                           <img src={getTimelineIconSrc(activity)}
@@ -871,7 +904,7 @@
             {:else}
               <div class="timeline-entry-card timeline-entry-card-compact timeline-entry-card-compact-grid">
                 <div class="timeline-entry-app timeline-entry-app-compact">
-                  <div class={`timeline-app-icon ${info.isCustom ? '' : `timeline-app-icon-${info.color}`}`}
+                  <div class="timeline-app-icon"
                        style={iconStyle(info)}>
                     {#if getTimelineIconSrc(activity)}
                       <img src={getTimelineIconSrc(activity)}
@@ -946,7 +979,7 @@
       <div class="timeline-detail-header p-6 border-b border-slate-200 dark:border-slate-700">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <div class={`timeline-app-icon timeline-app-icon-lg ${info.isCustom ? '' : `timeline-app-icon-${info.color}`}`}
+            <div class="timeline-app-icon timeline-app-icon-lg"
                  style={iconStyle(info)}>
               {#if getTimelineIconSrc(selectedActivity)}
                 <img src={getTimelineIconSrc(selectedActivity)}
@@ -985,7 +1018,7 @@
           </div>
           <div class="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
             {#each $categoryStore as cat}
-              <div class="relative">
+              <div class="relative group">
                 <button
                   on:click={() => changeAppCategory(selectedActivity, cat.key)}
                   class="segment-btn rounded-lg border px-3 py-2 text-sm flex items-center justify-center gap-1.5 w-full
@@ -997,13 +1030,16 @@
                   <span class="text-xs">{cat.icon}</span>
                   <span>{getCategoryDisplayName(cat)}</span>
                 </button>
-                {#if cat.is_custom}
+                {#if !cat.is_system}
+                  <button
+                    on:click|stopPropagation={() => startRenameCategory(cat)}
+                    class="absolute -top-1.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs leading-none opacity-0 group-hover:opacity-100 hover:bg-blue-600 transition-opacity shadow-sm"
+                    disabled={categorySaving}
+                    title={t('timeline.renameCategory')}
+                  >✎</button>
                   <button
                     on:click|stopPropagation={() => pendingDeleteCategory = { key: cat.key, name: getCategoryDisplayName(cat) }}
                     class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs leading-none opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-opacity shadow-sm"
-                    style="opacity: 0.6;"
-                    on:mouseenter={(e) => e.target.style.opacity = '1'}
-                    on:mouseleave={(e) => e.target.style.opacity = '0.6'}
                     disabled={categorySaving}
                     title={t('timeline.deleteCategory')}
                   >×</button>
@@ -1058,6 +1094,51 @@
                 </button>
                 <button
                   on:click={createCustomCategory}
+                  class="px-3 py-1 text-xs rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+                >
+                  {t('timeline.confirmChange')}
+                </button>
+              </div>
+            </div>
+          {/if}
+
+          {#if showRenameCategory}
+            <div class="mt-3 p-3 rounded-lg border border-dashed border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/20 space-y-2">
+              <p class="text-xs text-slate-500 dark:text-slate-400">{t('timeline.renameCategory')}</p>
+              <div class="flex items-center gap-2">
+                <input
+                  type="text"
+                  bind:value={renameCategoryName}
+                  placeholder={t('timeline.categoryNamePlaceholder')}
+                  class="flex-1 px-2 py-1 text-sm rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700"
+                />
+                <input
+                  type="color"
+                  bind:value={renameCategoryColor}
+                  class="w-8 h-8 rounded cursor-pointer border-0"
+                />
+                <span class="text-lg">{renameCategoryIcon}</span>
+              </div>
+              <div class="flex flex-wrap gap-1">
+                {#each CATEGORY_EMOJIS as emoji}
+                  <button
+                    type="button"
+                    on:click={() => renameCategoryIcon = emoji}
+                    class="w-7 h-7 flex items-center justify-center text-base rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors {renameCategoryIcon === emoji ? 'bg-primary-100 dark:bg-primary-900/40 ring-1 ring-primary-400' : ''}"
+                  >
+                    {emoji}
+                  </button>
+                {/each}
+              </div>
+              <div class="flex justify-end gap-2">
+                <button
+                  on:click={() => showRenameCategory = false}
+                  class="px-3 py-1 text-xs rounded-lg text-slate-500 hover:text-slate-700"
+                >
+                  {t('timeline.cancel')}
+                </button>
+                <button
+                  on:click={saveRenameCategory}
                   class="px-3 py-1 text-xs rounded-lg bg-primary-600 text-white hover:bg-primary-700"
                 >
                   {t('timeline.confirmChange')}

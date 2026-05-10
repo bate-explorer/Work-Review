@@ -14,13 +14,14 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::Client;
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
-fn format_domain_label(domain: &crate::database::DomainUsage, locale: AppLocale) -> String {
+fn format_domain_label(domain: &crate::database::DomainUsage, locale: AppLocale, semantic_overrides: &HashMap<String, String>) -> String {
     match domain.semantic_category.as_deref().map(str::trim) {
         Some(semantic_category) if !semantic_category.is_empty() => {
-            let semantic_category = translate_semantic_category_name(semantic_category, locale);
+            let semantic_category = translate_semantic_category_name(semantic_category, locale, semantic_overrides);
             match locale {
                 AppLocale::En => format!("{} ({})", domain.domain, semantic_category),
                 _ => format!("{}（{}）", domain.domain, semantic_category),
@@ -92,7 +93,7 @@ impl LocalAnalyzer {
                 .domain_usage
                 .iter()
                 .take(3)
-                .map(|domain| format_domain_label(domain, self.locale))
+                .map(|domain| format_domain_label(domain, self.locale, &HashMap::new()))
                 .collect(),
         );
 
@@ -337,6 +338,8 @@ impl Analyzer for LocalAnalyzer {
         activities: &[Activity],
         _screenshots_dir: &Path,
         locale: AppLocale,
+        category_name_overrides: HashMap<String, String>,
+        semantic_name_overrides: HashMap<String, String>,
     ) -> Result<GeneratedReport> {
         log::info!("生成本地日报（尝试调用 Ollama）");
 
@@ -356,7 +359,7 @@ impl Analyzer for LocalAnalyzer {
         if !stats.category_usage.is_empty() {
             report.push_str(&wrap_block(
                 BLOCK_LOCAL_CATEGORY,
-                &render_local_category_list(stats, locale),
+                &render_local_category_list(stats, locale, &category_name_overrides),
             ));
         }
 
@@ -383,7 +386,7 @@ impl Analyzer for LocalAnalyzer {
         if !stats.domain_usage.is_empty() {
             report.push_str(&wrap_block(
                 BLOCK_LOCAL_DOMAIN_USAGE,
-                &render_local_domain_usage_list(stats, locale),
+                &render_local_domain_usage_list(stats, locale, &semantic_name_overrides),
             ));
         }
 

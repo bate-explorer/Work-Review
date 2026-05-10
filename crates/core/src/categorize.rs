@@ -772,16 +772,7 @@ pub fn is_valid_category_key(
     custom_categories: &[crate::config::CustomCategory],
 ) -> bool {
     let lowered = category.trim().to_lowercase();
-    matches!(
-        lowered.as_str(),
-        "development"
-            | "browser"
-            | "communication"
-            | "office"
-            | "design"
-            | "entertainment"
-            | "other"
-    ) || custom_categories.iter().any(|c| c.key == lowered)
+    custom_categories.iter().any(|c| c.key == lowered)
 }
 
 fn normalized_app_rule_key(app_name: &str) -> String {

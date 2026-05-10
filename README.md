@@ -154,6 +154,15 @@ sudo apt install xdotool x11-utils scrot
 
 </details>
 
+Ubuntu 24.04 / 24.10 Wayland (GNOME 46–47) 用户如遇截图闪屏/快门声问题，可使用一键安装脚本自动修复：
+
+```bash
+bash scripts/deb/reinstall.sh      # deb 方案（推荐）
+bash scripts/deb/reinstall.sh --dry-run  # 预览操作
+```
+
+详见 [scripts/ubuntu-wayland-README.md](scripts/ubuntu-wayland-README.md)。
+
 ---
 
 ## 扩展能力（Beta）

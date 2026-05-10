@@ -597,6 +597,12 @@ pub struct AppConfig {
     /// 用户自定义语义分类
     #[serde(default)]
     pub custom_semantic_categories: Vec<CustomSemanticCategory>,
+    /// 已删除的内置应用分类 key（防止 seed 复活）
+    #[serde(default)]
+    pub deleted_default_categories: Vec<String>,
+    /// 已删除的内置语义分类 key（防止 seed 复活）
+    #[serde(default)]
+    pub deleted_default_semantic_categories: Vec<String>,
     /// 存储配置
     #[serde(default)]
     pub storage: StorageConfig,
@@ -665,6 +671,9 @@ pub struct AppConfig {
     /// macOS 录屏权限是否已经主动弹过引导，避免每次启动都重复请求
     #[serde(default)]
     pub macos_screen_capture_permission_prompted: bool,
+    /// 上次运行的应用版本，用于检测版本更新后重置权限引导
+    #[serde(default)]
+    pub last_app_version: Option<String>,
     /// 主题模式: system, light, dark
     pub theme: String,
     /// 上班开始时间（0-23）
@@ -791,6 +800,8 @@ impl Default for AppConfig {
             custom_categories: Vec::new(),
             website_semantic_rules: Vec::new(),
             custom_semantic_categories: Vec::new(),
+            deleted_default_categories: Vec::new(),
+            deleted_default_semantic_categories: Vec::new(),
             storage: StorageConfig::default(),
             daily_report_custom_prompt: String::new(),
             daily_report_prompt_presets: Vec::new(),
@@ -814,6 +825,7 @@ impl Default for AppConfig {
             auto_start: false,
             auto_start_silent: false,
             macos_screen_capture_permission_prompted: false,
+            last_app_version: None,
             theme: "system".to_string(),
             work_start_hour: 9,
             work_end_hour: 18,
@@ -871,6 +883,8 @@ impl AppConfig {
             &self.custom_semantic_categories,
         );
         normalize_custom_semantic_categories(&mut self.custom_semantic_categories);
+        seed_default_categories(&mut self.custom_categories, &self.deleted_default_categories);
+        seed_default_semantic_categories(&mut self.custom_semantic_categories, &self.deleted_default_semantic_categories);
         self.screenshot_interval = normalize_screenshot_interval(self.screenshot_interval);
         self.idle_threshold_minutes = normalize_idle_threshold_minutes(self.idle_threshold_minutes);
         self.avatar_scale = normalize_avatar_scale(self.avatar_scale);
@@ -1144,10 +1158,9 @@ fn normalize_website_semantic_rules(
             continue;
         }
 
-        // 验证语义分类：必须是内置名称或自定义 key
-        let is_builtin = is_valid_builtin_semantic_category(semantic_category);
+        // 验证语义分类：必须在自定义分类列表中
         let is_custom = custom_keys.iter().any(|k| k == semantic_category);
-        if !is_builtin && !is_custom {
+        if !is_custom {
             continue;
         }
 
@@ -1189,16 +1202,69 @@ fn normalize_custom_semantic_categories(categories: &mut Vec<CustomSemanticCateg
 
     let mut seen = HashSet::new();
     categories.retain(|c| {
-        let key = c.key.trim().to_lowercase();
-        let valid_key = !key.is_empty()
-            && key
-                .chars()
-                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-');
-        if !valid_key || c.name.trim().is_empty() {
+        let key = c.key.trim();
+        let name = c.name.trim();
+        if key.is_empty() || name.is_empty() {
             return false;
         }
-        seen.insert(key)
+        seen.insert(key.to_string())
     });
+}
+
+fn seed_default_categories(categories: &mut Vec<CustomCategory>, deleted: &[String]) {
+    let defaults: Vec<(&str, &str, &str, &str)> = vec![
+        ("development", "开发工具", "#3B82F6", "⚡"),
+        ("browser", "浏览器", "#22C55E", "🌐"),
+        ("communication", "通讯协作", "#EAB308", "💬"),
+        ("office", "办公软件", "#8B5CF6", "📝"),
+        ("design", "设计工具", "#EC4899", "🎨"),
+        ("entertainment", "娱乐摸鱼", "#EF4444", "🎮"),
+        ("other", "其他", "#6B7280", "📁"),
+    ];
+    let existing_keys: Vec<String> = categories.iter().map(|c| c.key.clone()).collect();
+    for (key, name, color, icon) in defaults {
+        if deleted.iter().any(|d| d == key) {
+            continue;
+        }
+        if !existing_keys.iter().any(|k| k == key) {
+            categories.push(CustomCategory {
+                key: key.to_string(),
+                name: name.to_string(),
+                color: color.to_string(),
+                icon: icon.to_string(),
+            });
+        }
+    }
+}
+
+fn seed_default_semantic_categories(categories: &mut Vec<CustomSemanticCategory>, deleted: &[String]) {
+    let defaults: Vec<(&str, &str)> = vec![
+        ("编码开发", "编码开发"),
+        ("内容撰写", "内容撰写"),
+        ("资料阅读", "资料阅读"),
+        ("资料调研", "资料调研"),
+        ("任务规划", "任务规划"),
+        ("设计创作", "设计创作"),
+        ("AI 协作", "AI 协作"),
+        ("即时聊天", "即时聊天"),
+        ("会议沟通", "会议沟通"),
+        ("视频内容", "视频内容"),
+        ("音乐音频", "音乐音频"),
+        ("休息娱乐", "休息娱乐"),
+        ("未知活动", "未知活动"),
+    ];
+    let existing_keys: Vec<String> = categories.iter().map(|c| c.key.clone()).collect();
+    for (key, name) in defaults {
+        if deleted.iter().any(|d| d == key) {
+            continue;
+        }
+        if !existing_keys.iter().any(|k| k == key) {
+            categories.push(CustomSemanticCategory {
+                key: key.to_string(),
+                name: name.to_string(),
+            });
+        }
+    }
 }
 
 fn normalize_prompt_presets(presets: &mut Vec<PromptPreset>) {

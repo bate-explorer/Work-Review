@@ -227,6 +227,8 @@ pub fn clean_browser_window_title(title: &str, app_name: &str) -> String {
         "Safari"
     } else if app_name_lower.contains("arc") {
         "Arc"
+    } else if app_name_lower == "cent" || app_name_lower == "cent browser" || app_name_lower == "centbrowser" {
+        "Cent Browser"
     } else {
         ""
     };
@@ -3044,6 +3046,19 @@ fn browser_url_script_macos(app_lower: &str) -> Option<(String, &'static str)> {
             ),
             "Sidekick",
         ))
+    } else if app_lower == "cent" || app_lower == "cent browser" || app_lower == "centbrowser" {
+        // Cent Browser 基于 Chromium
+        Some((
+            build_running_guarded_browser_script_macos(
+                "Cent Browser",
+                r#"        if (count of windows) > 0 then
+            return URL of active tab of front window
+        else
+            return ""
+        end if"#,
+            ),
+            "Cent Browser",
+        ))
     } else {
         None
     }
@@ -4643,23 +4658,14 @@ pub fn normalize_category_key(category: &str) -> String {
     }
 }
 
-/// 检查分类 key 是否有效（预设 + 自定义）
+/// 检查分类 key 是否有效（自定义分类列表）
 #[allow(dead_code)]
 pub fn is_valid_category_key(
     category: &str,
     custom_categories: &[crate::config::CustomCategory],
 ) -> bool {
     let lowered = category.trim().to_lowercase();
-    matches!(
-        lowered.as_str(),
-        "development"
-            | "browser"
-            | "communication"
-            | "office"
-            | "design"
-            | "entertainment"
-            | "other"
-    ) || custom_categories.iter().any(|c| c.key == lowered)
+    custom_categories.iter().any(|c| c.key == lowered)
 }
 
 fn normalized_app_rule_key(app_name: &str) -> String {

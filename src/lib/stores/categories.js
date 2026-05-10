@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
-import { locale, translateCategoryLabel, translateSemanticCategoryLabel } from '$lib/i18n/index.js';
+import { translateCategoryLabel, translateSemanticCategoryLabel } from '$lib/i18n/index.js';
 
 function createCategoryStore() {
   const { subscribe, set, update } = writable([]);
@@ -15,28 +15,19 @@ function createCategoryStore() {
   }
 
   function getCategoryMeta(key) {
-    let result = { color: 'gray', icon: '📁', name: key, isCustom: false };
+    let result = { color: 'gray', icon: '📁', name: key, isSystem: false };
     let cats = [];
     const unsub = subscribe(v => { cats = v; });
     unsub();
 
     const found = cats.find(c => c.key === key);
     if (found) {
-      if (found.is_custom) {
-        result = {
-          color: found.color,
-          icon: found.icon,
-          name: found.name,
-          isCustom: true,
-        };
-      } else {
-        result = {
-          color: found.color,
-          icon: found.icon,
-          name: translateCategoryLabel(found.key),
-          isCustom: false,
-        };
-      }
+      result = {
+        color: found.color,
+        icon: found.icon,
+        name: found.name || translateCategoryLabel(found.key),
+        isSystem: found.is_system || false,
+      };
     } else {
       result.name = translateCategoryLabel(key);
     }
@@ -74,12 +65,8 @@ function createSemanticCategoryStore() {
 
     const found = cats.find(c => c.key === key);
     if (found) {
-      if (found.is_custom) {
-        return found.name;
-      }
-      return translateSemanticCategoryLabel(found.key);
+      return found.name || translateSemanticCategoryLabel(found.key);
     }
-    // fallback: 可能是内置分类但还没加载
     return translateSemanticCategoryLabel(key) || key;
   }
 
@@ -90,14 +77,7 @@ function createSemanticCategoryStore() {
     return cats;
   }
 
-  function isCustomSemanticCategory(key) {
-    let cats = [];
-    const unsub = subscribe(v => { cats = v; });
-    unsub();
-    return cats.some(c => c.key === key && c.is_custom);
-  }
-
-  return { subscribe, set, refresh, getSemanticCategoryDisplayName, getAllSemanticCategories, isCustomSemanticCategory };
+  return { subscribe, set, refresh, getSemanticCategoryDisplayName, getAllSemanticCategories };
 }
 
 export const semanticCategoryStore = createSemanticCategoryStore();

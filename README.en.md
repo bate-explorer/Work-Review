@@ -154,6 +154,15 @@ sudo apt install xdotool x11-utils scrot
 
 </details>
 
+Ubuntu 24.04 / 24.10 Wayland (GNOME 46–47) users experiencing screenshot flash or shutter sound can use the one-click install script to fix it automatically:
+
+```bash
+bash scripts/deb/reinstall.sh           # deb method (recommended)
+bash scripts/deb/reinstall.sh --dry-run # preview operations
+```
+
+See [scripts/ubuntu-wayland-README.md](scripts/ubuntu-wayland-README.md) for details.
+
 ---
 
 ## Extended Capabilities (Beta)

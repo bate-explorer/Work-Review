@@ -14,6 +14,7 @@ use crate::error::{AppError, Result};
 use async_trait::async_trait;
 use reqwest::{Client, Url};
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -37,10 +38,10 @@ fn is_local_summary_endpoint(endpoint: &str) -> bool {
         })
 }
 
-fn format_domain_label(domain: &crate::database::DomainUsage, locale: AppLocale) -> String {
+fn format_domain_label(domain: &crate::database::DomainUsage, locale: AppLocale, semantic_overrides: &HashMap<String, String>) -> String {
     match domain.semantic_category.as_deref().map(str::trim) {
         Some(semantic_category) if !semantic_category.is_empty() => {
-            let semantic_category = translate_semantic_category_name(semantic_category, locale);
+            let semantic_category = translate_semantic_category_name(semantic_category, locale, semantic_overrides);
             match locale {
                 AppLocale::En => format!("{} ({})", domain.domain, semantic_category),
                 _ => format!("{}（{}）", domain.domain, semantic_category),
@@ -505,7 +506,7 @@ impl SummaryAnalyzer {
                 .domain_usage
                 .iter()
                 .take(5)
-                .map(|domain| format_domain_label(domain, self.locale))
+                .map(|domain| format_domain_label(domain, self.locale, &HashMap::new()))
                 .collect(),
         );
 
@@ -706,6 +707,8 @@ impl Analyzer for SummaryAnalyzer {
         activities: &[Activity],
         _screenshots_dir: &Path,
         locale: AppLocale,
+        category_name_overrides: HashMap<String, String>,
+        semantic_name_overrides: HashMap<String, String>,
     ) -> Result<GeneratedReport> {
         log::info!("生成混合模式日报：固定模板 + AI 扩展");
 
@@ -726,7 +729,7 @@ impl Analyzer for SummaryAnalyzer {
         if !stats.category_usage.is_empty() {
             report.push_str(&wrap_block(
                 BLOCK_CATEGORY_TABLE,
-                &render_category_table(stats, locale),
+                &render_category_table(stats, locale, &category_name_overrides),
             ));
         }
 
@@ -747,7 +750,7 @@ impl Analyzer for SummaryAnalyzer {
         if !stats.domain_usage.is_empty() {
             report.push_str(&wrap_block(
                 BLOCK_DOMAIN_USAGE_TABLE,
-                &render_domain_usage_table(stats, locale),
+                &render_domain_usage_table(stats, locale, &semantic_name_overrides),
             ));
         }
 

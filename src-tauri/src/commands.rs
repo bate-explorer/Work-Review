@@ -3919,6 +3919,16 @@ pub(crate) async fn generate_report_inner(
     // 外层加 300 秒总超时，防止 AI 调用卡死后前端永远等待
     let screenshots_dir = data_dir.clone();
     let date_gen = date.clone();
+    let category_name_overrides: std::collections::HashMap<String, String> = config
+        .custom_categories
+        .iter()
+        .map(|c| (c.key.clone(), c.name.clone()))
+        .collect();
+    let semantic_name_overrides: std::collections::HashMap<String, String> = config
+        .custom_semantic_categories
+        .iter()
+        .map(|c| (c.key.clone(), c.name.clone()))
+        .collect();
     let spawn_result = tokio::spawn(async move {
         analyzer
             .generate_report(
@@ -3927,6 +3937,8 @@ pub(crate) async fn generate_report_inner(
                 &activities,
                 &screenshots_dir,
                 report_locale,
+                category_name_overrides,
+                semantic_name_overrides,
             )
             .await
     });
@@ -4088,6 +4100,8 @@ pub(crate) fn get_saved_report_inner(
             &report.content,
             &live_stats,
             report_locale,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
         );
     }
 
@@ -6589,38 +6603,20 @@ pub struct CategoryInfo {
     pub name: String,
     pub color: String,
     pub icon: String,
-    pub is_custom: bool,
+    pub is_system: bool,
 }
 
 /// 分类信息 —— 内部复用版
 pub(crate) fn get_categories_inner(state: &Arc<Mutex<AppState>>) -> Result<Vec<CategoryInfo>, AppError> {
     let s = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
     let mut result = Vec::new();
-    let builtins: Vec<(&str, &str, &str, &str)> = vec![
-        ("development", "开发工具", "blue", "⚡"),
-        ("browser", "浏览器", "green", "🌐"),
-        ("communication", "通讯协作", "yellow", "💬"),
-        ("office", "办公软件", "purple", "📝"),
-        ("design", "设计工具", "pink", "🎨"),
-        ("entertainment", "娱乐摸鱼", "red", "🎮"),
-        ("other", "其他", "gray", "📁"),
-    ];
-    for (key, name, color, icon) in builtins {
-        result.push(CategoryInfo {
-            key: key.to_string(),
-            name: name.to_string(),
-            color: color.to_string(),
-            icon: icon.to_string(),
-            is_custom: false,
-        });
-    }
     for c in &s.config.custom_categories {
         result.push(CategoryInfo {
             key: c.key.clone(),
             name: c.name.clone(),
             color: c.color.clone(),
             icon: c.icon.clone(),
-            is_custom: true,
+            is_system: c.key == "other",
         });
     }
     Ok(result)
@@ -6662,19 +6658,6 @@ pub async fn save_custom_category(
     if !color.starts_with('#') || color.len() != 7 {
         return Err(AppError::Unknown("颜色格式无效，需为 #RRGGBB".to_string()));
     }
-    // 不允许覆盖预设分类
-    if matches!(
-        key.as_str(),
-        "development"
-            | "browser"
-            | "communication"
-            | "office"
-            | "design"
-            | "entertainment"
-            | "other"
-    ) {
-        return Err(AppError::Unknown("不能覆盖预设分类".to_string()));
-    }
 
     let next_config = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
@@ -6714,6 +6697,10 @@ pub async fn delete_custom_category(
     let key = key.trim().to_lowercase();
     let fallback = reassign_to.unwrap_or_else(|| "other".to_string());
 
+    if key == "other" {
+        return Err(AppError::Unknown("不能删除默认分类「其他」".to_string()));
+    }
+
     let affected = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         // 统计引用该分类的规则数
@@ -6729,8 +6716,16 @@ pub async fn delete_custom_category(
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         let mut next_config = state.config.clone();
 
-        // 删除自定义分类
+        // 删除分类
         next_config.custom_categories.retain(|c| c.key != key);
+
+        // 记录已删除的内置分类 key，防止 seed 复活
+        const DEFAULT_KEYS: &[&str] = &["development", "browser", "communication", "office", "design", "entertainment", "other"];
+        if DEFAULT_KEYS.contains(&key.as_str())
+            && !next_config.deleted_default_categories.contains(&key)
+        {
+            next_config.deleted_default_categories.push(key.clone());
+        }
 
         // 重定向引用该分类的规则
         for rule in &mut next_config.app_category_rules {
@@ -6751,40 +6746,18 @@ pub async fn delete_custom_category(
 pub struct SemanticCategoryInfo {
     pub key: String,
     pub name: String,
-    pub is_custom: bool,
+    pub is_system: bool,
 }
 
 /// 语义分类信息 —— 内部复用版
 pub(crate) fn get_semantic_categories_inner(state: &Arc<Mutex<AppState>>) -> Result<Vec<SemanticCategoryInfo>, AppError> {
     let s = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
     let mut result = Vec::new();
-    let builtins: Vec<(&str, &str)> = vec![
-        ("编码开发", "编码开发"),
-        ("内容撰写", "内容撰写"),
-        ("资料阅读", "资料阅读"),
-        ("资料调研", "资料调研"),
-        ("任务规划", "任务规划"),
-        ("设计创作", "设计创作"),
-        ("AI 协作", "AI 协作"),
-        ("即时聊天", "即时聊天"),
-        ("会议沟通", "会议沟通"),
-        ("视频内容", "视频内容"),
-        ("音乐音频", "音乐音频"),
-        ("休息娱乐", "休息娱乐"),
-        ("未知活动", "未知活动"),
-    ];
-    for (key, name) in builtins {
-        result.push(SemanticCategoryInfo {
-            key: key.to_string(),
-            name: name.to_string(),
-            is_custom: false,
-        });
-    }
     for c in &s.config.custom_semantic_categories {
         result.push(SemanticCategoryInfo {
             key: c.key.clone(),
             name: c.name.clone(),
-            is_custom: true,
+            is_system: c.key == "未知活动",
         });
     }
     Ok(result)
@@ -6804,26 +6777,14 @@ pub async fn save_custom_semantic_category(
     app: AppHandle,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), AppError> {
-    let key = key.trim().to_lowercase();
+    let key = key.trim().to_string();
     let name = name.trim().to_string();
 
-    if key.is_empty()
-        || !key
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
-        return Err(AppError::Unknown(
-            "分类标识只能包含小写字母、数字和连字符".to_string(),
-        ));
+    if key.is_empty() {
+        return Err(AppError::Unknown("分类标识不能为空".to_string()));
     }
     if name.is_empty() {
         return Err(AppError::Unknown("分类名称不能为空".to_string()));
-    }
-    // 不允许覆盖预设语义分类
-    if crate::config::is_valid_builtin_semantic_category(&name) {
-        return Err(AppError::Unknown(
-            "不能使用与预设分类相同的名称".to_string(),
-        ));
     }
 
     let next_config = {
@@ -6858,7 +6819,11 @@ pub async fn delete_custom_semantic_category(
     app: AppHandle,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<usize, AppError> {
-    let key = key.trim().to_lowercase();
+    let key = key.trim().to_string();
+
+    if key == "未知活动" {
+        return Err(AppError::Unknown("不能删除默认分类「未知活动」".to_string()));
+    }
 
     let affected = {
         let state = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
@@ -6879,6 +6844,18 @@ pub async fn delete_custom_semantic_category(
         next_config
             .custom_semantic_categories
             .retain(|c| c.key != key);
+
+        // 记录已删除的内置语义分类 key，防止 seed 复活
+        const DEFAULT_SEMANTIC_KEYS: &[&str] = &[
+            "编码开发", "内容撰写", "资料阅读", "资料调研", "任务规划",
+            "设计创作", "AI 协作", "即时聊天", "会议沟通", "视频内容",
+            "音乐音频", "休息娱乐", "未知活动",
+        ];
+        if DEFAULT_SEMANTIC_KEYS.contains(&key.as_str())
+            && !next_config.deleted_default_semantic_categories.contains(&key)
+        {
+            next_config.deleted_default_semantic_categories.push(key.clone());
+        }
 
         // 重定向引用该分类的规则到"未知活动"
         for rule in &mut next_config.website_semantic_rules {

@@ -3,6 +3,7 @@ use crate::analysis::{
     Analyzer, AppLocale, GeneratedReport,
 };
 use crate::database::{Activity, DailyStats};
+use std::collections::HashMap;
 use crate::error::{AppError, Result};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -124,8 +125,9 @@ impl CloudAnalyzer {
         stats: &DailyStats,
         activities: &[Activity],
         insights: &[String],
+        category_overrides: &HashMap<String, String>,
     ) -> Result<String> {
-        let stats_summary = generate_stats_summary_for_locale(stats, self.locale);
+        let stats_summary = generate_stats_summary_for_locale(stats, self.locale, category_overrides);
         let timeline = generate_session_timeline(activities, self.locale);
         let insights_text = insights
             .iter()
@@ -198,6 +200,8 @@ impl Analyzer for CloudAnalyzer {
         activities: &[Activity],
         screenshots_dir: &Path,
         _locale: AppLocale,
+        _category_name_overrides: HashMap<String, String>,
+        _semantic_name_overrides: HashMap<String, String>,
     ) -> Result<GeneratedReport> {
         if self.api_key.is_empty() {
             return Err(AppError::Analysis("OpenAI API Key 未配置".to_string()));
@@ -230,7 +234,7 @@ impl Analyzer for CloudAnalyzer {
 
         Ok(GeneratedReport {
             content: self
-                .generate_final_report(date, stats, activities, &insights)
+                .generate_final_report(date, stats, activities, &insights, &_category_name_overrides)
                 .await?,
             used_ai: true,
             fallback_reason: None,

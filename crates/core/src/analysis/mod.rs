@@ -61,6 +61,8 @@ pub trait Analyzer: Send + Sync {
         activities: &[Activity],
         screenshots_dir: &Path,
         locale: AppLocale,
+        category_name_overrides: HashMap<String, String>,
+        semantic_name_overrides: HashMap<String, String>,
     ) -> Result<GeneratedReport>;
 }
 
@@ -179,7 +181,16 @@ pub fn format_duration_for_locale(seconds: i64, locale: AppLocale) -> String {
     }
 }
 
-pub fn translate_category_name(category_key: &str, locale: AppLocale) -> String {
+use std::collections::HashMap;
+
+pub fn translate_category_name(
+    category_key: &str,
+    locale: AppLocale,
+    category_overrides: &HashMap<String, String>,
+) -> String {
+    if let Some(name) = category_overrides.get(category_key) {
+        return name.clone();
+    }
     match locale {
         AppLocale::ZhCn => match category_key {
             "development" => "开发工具".to_string(),
@@ -214,7 +225,14 @@ pub fn translate_category_name(category_key: &str, locale: AppLocale) -> String 
     }
 }
 
-pub fn translate_semantic_category_name(category_label: &str, locale: AppLocale) -> String {
+pub fn translate_semantic_category_name(
+    category_label: &str,
+    locale: AppLocale,
+    semantic_overrides: &HashMap<String, String>,
+) -> String {
+    if let Some(name) = semantic_overrides.get(category_label) {
+        return name.clone();
+    }
     match locale {
         AppLocale::ZhCn => match category_label {
             "编码开发" => "编码开发".to_string(),
@@ -351,7 +369,11 @@ pub fn generate_hourly_activity_summary_for_locale(
 }
 
 /// 生成统计摘要
-pub fn generate_stats_summary_for_locale(stats: &DailyStats, locale: AppLocale) -> String {
+pub fn generate_stats_summary_for_locale(
+    stats: &DailyStats,
+    locale: AppLocale,
+    category_overrides: &HashMap<String, String>,
+) -> String {
     let mut summary = String::new();
 
     match locale {
@@ -408,7 +430,7 @@ pub fn generate_stats_summary_for_locale(stats: &DailyStats, locale: AppLocale) 
         };
         summary.push_str(&format!(
             "- {}: {} ({}%)\n",
-            translate_category_name(&cat.category, locale),
+            translate_category_name(&cat.category, locale, category_overrides),
             format_duration_for_locale(cat.duration, locale),
             percentage
         ));
@@ -624,12 +646,13 @@ mod tests {
 
     #[test]
     fn 英文语义分类应翻译为英文标签() {
+        let empty = HashMap::new();
         assert_eq!(
-            translate_semantic_category_name("编码开发", AppLocale::En),
+            translate_semantic_category_name("编码开发", AppLocale::En, &empty),
             "Development"
         );
         assert_eq!(
-            translate_semantic_category_name("未知活动", AppLocale::En),
+            translate_semantic_category_name("未知活动", AppLocale::En, &empty),
             "Unknown"
         );
     }

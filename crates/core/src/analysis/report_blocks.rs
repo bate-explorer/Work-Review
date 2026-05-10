@@ -17,6 +17,7 @@ use crate::analysis::{
     translate_category_name, translate_semantic_category_name, AppLocale,
 };
 use crate::database::{DailyStats, DomainUsage};
+use std::collections::HashMap;
 
 pub const BLOCK_CATEGORY_TABLE: &str = "CATEGORY_TABLE";
 pub const BLOCK_APP_USAGE_TABLE: &str = "APP_USAGE_TABLE";
@@ -50,12 +51,14 @@ pub fn render_report_with_live_stats(
     content: &str,
     stats: &DailyStats,
     locale: AppLocale,
+    category_overrides: &HashMap<String, String>,
+    semantic_overrides: &HashMap<String, String>,
 ) -> String {
     let mut output = content.to_string();
     output = replace_block(
         &output,
         BLOCK_CATEGORY_TABLE,
-        &render_category_table(stats, locale),
+        &render_category_table(stats, locale, category_overrides),
     );
     output = replace_block(
         &output,
@@ -70,7 +73,7 @@ pub fn render_report_with_live_stats(
     output = replace_block(
         &output,
         BLOCK_DOMAIN_USAGE_TABLE,
-        &render_domain_usage_table(stats, locale),
+        &render_domain_usage_table(stats, locale, semantic_overrides),
     );
     output = replace_block(
         &output,
@@ -80,7 +83,7 @@ pub fn render_report_with_live_stats(
     output = replace_block(
         &output,
         BLOCK_LOCAL_CATEGORY,
-        &render_local_category_list(stats, locale),
+        &render_local_category_list(stats, locale, category_overrides),
     );
     output = replace_block(
         &output,
@@ -90,7 +93,7 @@ pub fn render_report_with_live_stats(
     output = replace_block(
         &output,
         BLOCK_LOCAL_DOMAIN_USAGE,
-        &render_local_domain_usage_list(stats, locale),
+        &render_local_domain_usage_list(stats, locale, semantic_overrides),
     );
     output
 }
@@ -133,7 +136,7 @@ fn replace_block(content: &str, name: &str, fresh: &str) -> String {
 
 // ─────────── summary mode 的块渲染器 ───────────
 
-pub fn render_category_table(stats: &DailyStats, locale: AppLocale) -> String {
+pub fn render_category_table(stats: &DailyStats, locale: AppLocale, category_overrides: &HashMap<String, String>) -> String {
     if stats.category_usage.is_empty() {
         return String::new();
     }
@@ -151,7 +154,7 @@ pub fn render_category_table(stats: &DailyStats, locale: AppLocale) -> String {
         };
         out.push_str(&format!(
             "| {} | {} | {}% |\n",
-            translate_category_name(&cat.category, locale),
+            translate_category_name(&cat.category, locale, category_overrides),
             format_duration_for_locale(cat.duration, locale),
             percentage
         ));
@@ -201,7 +204,7 @@ pub fn render_hourly_summary(stats: &DailyStats, locale: AppLocale) -> String {
     out
 }
 
-pub fn render_domain_usage_table(stats: &DailyStats, locale: AppLocale) -> String {
+pub fn render_domain_usage_table(stats: &DailyStats, locale: AppLocale, semantic_overrides: &HashMap<String, String>) -> String {
     if stats.domain_usage.is_empty() {
         return String::new();
     }
@@ -219,7 +222,7 @@ pub fn render_domain_usage_table(stats: &DailyStats, locale: AppLocale) -> Strin
         out.push_str(&format!(
             "| {} | {} | {} |\n",
             index + 1,
-            format_domain_label_local(domain, locale),
+            format_domain_label_local(domain, locale, semantic_overrides),
             format_duration_for_locale(domain.duration, locale)
         ));
     }
@@ -260,7 +263,7 @@ pub fn render_local_overview(stats: &DailyStats, locale: AppLocale) -> String {
     out
 }
 
-pub fn render_local_category_list(stats: &DailyStats, locale: AppLocale) -> String {
+pub fn render_local_category_list(stats: &DailyStats, locale: AppLocale, category_overrides: &HashMap<String, String>) -> String {
     if stats.category_usage.is_empty() {
         return String::new();
     }
@@ -278,7 +281,7 @@ pub fn render_local_category_list(stats: &DailyStats, locale: AppLocale) -> Stri
         };
         out.push_str(&format!(
             "- **{}**: {} ({}%)\n",
-            translate_category_name(&cat.category, locale),
+            translate_category_name(&cat.category, locale, category_overrides),
             format_duration_for_locale(cat.duration, locale),
             percentage
         ));
@@ -307,7 +310,7 @@ pub fn render_local_app_usage_list(stats: &DailyStats, locale: AppLocale) -> Str
     out
 }
 
-pub fn render_local_domain_usage_list(stats: &DailyStats, locale: AppLocale) -> String {
+pub fn render_local_domain_usage_list(stats: &DailyStats, locale: AppLocale, semantic_overrides: &HashMap<String, String>) -> String {
     if stats.domain_usage.is_empty() {
         return String::new();
     }
@@ -320,17 +323,17 @@ pub fn render_local_domain_usage_list(stats: &DailyStats, locale: AppLocale) -> 
     for domain in stats.domain_usage.iter().take(5) {
         out.push_str(&format!(
             "- **{}**: {}\n",
-            format_domain_label_local(domain, locale),
+            format_domain_label_local(domain, locale, semantic_overrides),
             format_duration_for_locale(domain.duration, locale)
         ));
     }
     out
 }
 
-fn format_domain_label_local(domain: &DomainUsage, locale: AppLocale) -> String {
+fn format_domain_label_local(domain: &DomainUsage, locale: AppLocale, semantic_overrides: &HashMap<String, String>) -> String {
     match domain.semantic_category.as_deref().map(str::trim) {
         Some(semantic_category) if !semantic_category.is_empty() => {
-            let semantic_category = translate_semantic_category_name(semantic_category, locale);
+            let semantic_category = translate_semantic_category_name(semantic_category, locale, semantic_overrides);
             match locale {
                 AppLocale::En => format!("{} ({})", domain.domain, semantic_category),
                 _ => format!("{}（{}）", domain.domain, semantic_category),
@@ -397,7 +400,7 @@ mod tests {
             hourly_activity_distribution: vec![],
         };
         assert_eq!(
-            render_report_with_live_stats(legacy, &stats, AppLocale::ZhCn),
+            render_report_with_live_stats(legacy, &stats, AppLocale::ZhCn, &HashMap::new(), &HashMap::new()),
             legacy
         );
     }

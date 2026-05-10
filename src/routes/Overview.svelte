@@ -126,11 +126,41 @@
   let editingSemanticCategory = '';
   let savingDomainKey = null;
 
-  // 自定义语义分类（新建 + 删除）
+  // 语义分类（新建 + 删除 + 重命名）
   let showCreateSemanticCategory = false;
   let newSemanticCategoryName = '';
   let semanticCategorySaving = false;
   let pendingDeleteSemanticCategory = null; // { key, name }
+
+  // 重命名语义分类
+  let showRenameSemanticCategory = false;
+  let renameSemanticKey = '';
+  let renameSemanticName = '';
+
+  function startRenameSemanticCategory(cat) {
+    renameSemanticKey = cat.key;
+    renameSemanticName = cat.name;
+    showRenameSemanticCategory = true;
+  }
+
+  async function saveRenameSemanticCategory() {
+    const name = renameSemanticName.trim();
+    if (!name) return;
+    semanticCategorySaving = true;
+    try {
+      await invoke('save_custom_semantic_category', {
+        key: renameSemanticKey,
+        name,
+      });
+      await semanticCategoryStore.refresh();
+      showRenameSemanticCategory = false;
+      showToast(t('overview.semanticCategoryRenamed'), 'success');
+    } catch (e) {
+      showToast(e.toString(), 'error');
+    } finally {
+      semanticCategorySaving = false;
+    }
+  }
 
   function cancelDeleteSemanticCategory() { pendingDeleteSemanticCategory = null; }
   async function confirmDeleteSemanticCategory() {
@@ -178,8 +208,7 @@
   }
 
   function getSemanticCategoryDisplayName(cat) {
-    if (cat.is_custom) return cat.name;
-    return translateSemanticCategoryLabel(cat.key);
+    return cat.name || translateSemanticCategoryLabel(cat.key);
   }
   
   // 浏览器统计弹窗
@@ -1011,7 +1040,7 @@
               </p>
               <div class="mt-2 grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4">
                 {#each $semanticCategoryStore as cat}
-                  <div class="relative">
+                  <div class="relative group">
                     <button
                       on:click={() => editingSemanticCategory = cat.key}
                       class="segment-btn rounded-lg border px-3 py-2 text-sm flex items-center justify-center gap-1.5 w-full
@@ -1022,13 +1051,16 @@
                     >
                       <span>{getSemanticCategoryDisplayName(cat)}</span>
                     </button>
-                    {#if cat.is_custom}
+                    {#if !cat.is_system}
+                      <button
+                        on:click|stopPropagation={() => startRenameSemanticCategory(cat)}
+                        class="absolute -top-1.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs leading-none opacity-0 group-hover:opacity-100 hover:bg-blue-600 transition-opacity shadow-sm"
+                        disabled={semanticCategorySaving}
+                        title={t('overview.renameSemanticCategory')}
+                      >✎</button>
                       <button
                         on:click|stopPropagation={() => pendingDeleteSemanticCategory = { key: cat.key, name: getSemanticCategoryDisplayName(cat) }}
-                        class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs leading-none hover:bg-red-600 transition-opacity shadow-sm"
-                        style="opacity: 0.6;"
-                        on:mouseenter={(e) => e.target.style.opacity = '1'}
-                        on:mouseleave={(e) => e.target.style.opacity = '0.6'}
+                        class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs leading-none opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-opacity shadow-sm"
                         disabled={semanticCategorySaving}
                         title={t('overview.deleteSemanticCategory')}
                       >×</button>
@@ -1066,6 +1098,34 @@
                     </button>
                     <button
                       on:click={createCustomSemanticCategory}
+                      class="px-3 py-1 text-xs rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+                    >
+                      {t('overview.confirmChange')}
+                    </button>
+                  </div>
+                </div>
+              {/if}
+
+              {#if showRenameSemanticCategory}
+                <div class="mt-2 p-3 rounded-lg border border-dashed border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/20 space-y-2">
+                  <p class="text-xs text-slate-500 dark:text-slate-400">{t('overview.renameSemanticCategory')}</p>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="text"
+                      bind:value={renameSemanticName}
+                      placeholder={t('overview.semanticCategoryNamePlaceholder')}
+                      class="flex-1 px-2 py-1 text-sm rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700"
+                    />
+                  </div>
+                  <div class="flex justify-end gap-2">
+                    <button
+                      on:click={() => showRenameSemanticCategory = false}
+                      class="px-3 py-1 text-xs rounded-lg text-slate-500 hover:text-slate-700"
+                    >
+                      {t('overview.cancel')}
+                    </button>
+                    <button
+                      on:click={saveRenameSemanticCategory}
                       class="px-3 py-1 text-xs rounded-lg bg-primary-600 text-white hover:bg-primary-700"
                     >
                       {t('overview.confirmChange')}

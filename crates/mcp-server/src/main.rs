@@ -393,7 +393,7 @@ fn handle_tool_call(name: &str, args: &Value, state: &Arc<Mutex<AppState>>) -> V
             let segments = work_review_core::config::AppConfig::default().effective_work_segments();
             match s.db.get_daily_stats_with_segments(date, &segments) {
                 Ok(stats) => {
-                    let summary = work_review_core::analysis::generate_stats_summary_for_locale(&stats, locale);
+                    let summary = work_review_core::analysis::generate_stats_summary_for_locale(&stats, locale, &std::collections::HashMap::new());
                     json!({
                         "content": [{ "type": "text", "text": format!("工作日报 - {}\n\n{}", date, summary) }]
                     })

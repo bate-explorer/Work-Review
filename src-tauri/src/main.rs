@@ -889,18 +889,34 @@ pub(crate) fn resolve_activity_classification(
     window_title: &str,
     browser_url: Option<&str>,
 ) -> activity_classifier::ActivityClassification {
-    let base_category = monitor::categorize_app_with_rules(
+    let mut base_category = monitor::categorize_app_with_rules(
         &config.app_category_rules,
         app_name,
         window_title,
         &config.custom_categories,
     );
+    // 分类被删除时回退到 "other"
+    if base_category != "other"
+        && !config.custom_categories.iter().any(|c| c.key == base_category)
+    {
+        base_category = "other".to_string();
+    }
     let mut classification = activity_classifier::classify_activity_with_base_category(
         app_name,
         window_title,
         browser_url,
         &base_category,
     );
+
+    // 语义分类被删除时回退到 "未知活动"
+    if classification.semantic_category != "未知活动"
+        && !config
+            .custom_semantic_categories
+            .iter()
+            .any(|c| c.key == classification.semantic_category)
+    {
+        classification.semantic_category = "未知活动".to_string();
+    }
 
     if let Some(semantic_category) =
         monitor::find_website_semantic_override(&config.website_semantic_rules, browser_url)
@@ -2872,6 +2888,21 @@ async fn main() {
 
     // 初始化截屏服务
     let screenshot_service = ScreenshotService::new(&data_dir, &config.storage);
+
+    // 版本更新后重置 macOS 录屏权限引导标记，确保更新后能重新弹窗
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let is_version_changed = config.last_app_version.as_deref() != Some(&current_version);
+    if is_version_changed {
+        #[cfg(target_os = "macos")]
+        if config.last_app_version.is_some() {
+            log::info!("检测到版本更新 ({} → {})，重置录屏权限引导标记", config.last_app_version.as_deref().unwrap_or("-"), current_version);
+            config.macos_screen_capture_permission_prompted = false;
+        }
+        config.last_app_version = Some(current_version);
+        if let Err(e) = config.save(&config_path) {
+            log::warn!("保存版本信息失败: {e}");
+        }
+    }
 
     // macOS: 启动时检查并请求必要的系统权限
     #[cfg(target_os = "macos")]

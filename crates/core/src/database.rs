@@ -1009,31 +1009,33 @@ impl Database {
 
         // 获取当天所有活动
         let mut stmt = conn.prepare(
-            "SELECT id, app_name, browser_url, duration FROM activities
+            "SELECT id, app_name, browser_url, window_title, duration FROM activities
              WHERE timestamp >= ?1 AND timestamp < ?2",
         )?;
 
-        let activities: Vec<(i64, String, Option<String>, i64)> = stmt
+        let activities: Vec<(i64, String, Option<String>, Option<String>, i64)> = stmt
             .query_map(params![start_ts, end_ts], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
             })?
             .filter_map(|r| r.ok())
             .collect();
 
-        // 按 app_name 或 browser_url 分组，记录每组所有 id 和 duration
+        // Group by same key as get_timeline: (app_name, browser_url OR window_title)
         use std::collections::HashMap;
         // key -> Vec<(id, duration)>
         let mut groups: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
 
-        for (id, app_name, browser_url, duration) in activities {
+        for (id, app_name, browser_url, window_title, duration) in activities {
             let key = if let Some(ref url) = browser_url {
                 if !url.is_empty() {
-                    format!("url:{url}")
+                    format!("url:{app_name}|{}", url.trim_end_matches('/'))
                 } else {
-                    format!("app:{app_name}")
+                    let title = window_title.as_deref().unwrap_or("");
+                    format!("app:{app_name}|{title}")
                 }
             } else {
-                format!("app:{app_name}")
+                let title = window_title.as_deref().unwrap_or("");
+                format!("app:{app_name}|{title}")
             };
 
             groups.entry(key).or_default().push((id, duration));
