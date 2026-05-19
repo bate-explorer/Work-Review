@@ -186,6 +186,59 @@ bash scripts/deb/reinstall.sh --dry-run  # 预览操作
 </details>
 
 <details>
+<summary>Localhost API</summary>
+
+应用启动后自动在本地开放 HTTP API（默认 `127.0.0.1:47831`），鉴权方式为 Bearer Token（首次启动自动生成，保存在数据目录的 `localhost_api_token.txt`）。
+
+### 认证
+
+所有请求（`/health` 和飞书回调除外）需携带 Token：
+
+```
+Authorization: Bearer <token>
+```
+
+或通过 Query 参数：`?token=<token>`
+
+### 接口列表
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/health` | 健康检查（免鉴权） |
+| GET | `/v1/device` | 设备信息 |
+| GET | `/v1/timeline/{date}` | 时间线（`date` 格式 `YYYY-MM-DD`，支持 `?limit=&offset=`） |
+| GET | `/v1/activities/{date}` | 活动列表（支持 `?limit=&offset=&category=`） |
+| GET | `/v1/stats/today` | 今日统计 |
+| GET | `/v1/stats/overview` | 综合统计（`?mode=today|date|week|range`） |
+| GET | `/v1/stats/daily/{date}` | 指定日期统计 |
+| GET | `/v1/reports` | 日报列表（`?limit=`） |
+| GET | `/v1/reports/{date}` | 指定日期日报（`?locale=`） |
+| GET | `/v1/reports/generate` | 生成日报（`?date=&locale=&force=true`） |
+| POST | `/v1/reports/export-markdown` | 导出日报 Markdown（body: `{ date, locale }`） |
+| GET | `/v1/apps/recent` | 最近使用的应用 |
+| GET | `/v1/apps/category-overview` | 应用分类概览 |
+| GET | `/v1/categories` | 应用分类列表 |
+| GET | `/v1/categories/semantic` | 语义分类列表 |
+| GET | `/v1/hourly-summaries/{date}` | 按小时汇总 |
+| GET | `/v1/hourly-app-breakdown/{date}` | 按小时应用分布 |
+| GET | `/v1/weekly-review` | 周报（`?date_from=&date_to=&limit=`） |
+| GET | `/v1/storage/stats` | 存储统计 |
+
+### 示例
+
+```bash
+# 获取今日时间线
+curl -H "Authorization: Bearer $(cat ~/work-review/localhost_api_token.txt)" \
+  http://127.0.0.1:47831/v1/timeline/2026-05-20
+
+# 生成日报
+curl -H "Authorization: Bearer $(cat ~/work-review/localhost_api_token.txt)" \
+  "http://127.0.0.1:47831/v1/reports/generate?date=2026-05-20"
+```
+
+</details>
+
+<details>
 <summary>MCP Server</summary>
 
 通过 stdio 协议将工作记录接入 AI 编码工具（Claude Code / Cursor / VS Code Copilot 等）。
