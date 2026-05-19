@@ -486,14 +486,14 @@ pub async fn handle_feishu_webhook(
             .get("challenge")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        // Verify token if configured
-        if let Some(expected) = config.feishu_verification_token.as_deref() {
-            if !expected.is_empty() {
-                let token = event.get("token").and_then(|v| v.as_str()).unwrap_or("");
-                if token != expected {
-                    return FeishuResponse::error(403, "verification token mismatch");
-                }
-            }
+        // Verify token (required when bot enabled)
+        let expected = config.feishu_verification_token.as_deref().unwrap_or("");
+        if expected.is_empty() {
+            return FeishuResponse::error(403, "verification token not configured");
+        }
+        let token = event.get("token").and_then(|v| v.as_str()).unwrap_or("");
+        if token != expected {
+            return FeishuResponse::error(403, "verification token mismatch");
         }
         return FeishuResponse::json(200, &serde_json::json!({"challenge": challenge}));
     }
@@ -511,14 +511,14 @@ pub async fn handle_feishu_webhook(
         );
     }
 
-    // Verify token in header
-    if let Some(expected) = config.feishu_verification_token.as_deref() {
-        if !expected.is_empty() {
-            let token = header.get("token").and_then(|v| v.as_str()).unwrap_or("");
-            if token != expected {
-                return FeishuResponse::error(403, "token mismatch");
-            }
-        }
+    // Verify token in header (required)
+    let expected = config.feishu_verification_token.as_deref().unwrap_or("");
+    if expected.is_empty() {
+        return FeishuResponse::error(403, "verification token not configured");
+    }
+    let token = header.get("token").and_then(|v| v.as_str()).unwrap_or("");
+    if token != expected {
+        return FeishuResponse::error(403, "token mismatch");
     }
 
     let event_body = match event.get("event") {

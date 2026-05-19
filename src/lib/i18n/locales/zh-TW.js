@@ -471,6 +471,8 @@ export default {
       telegramBotHint: '從 @BotFather 取得，支援 /reports /report /generate /device 命令',
       telegramBotProxy: '代理位址',
       telegramBotProxyHint: '無法直連時填寫，如 http://127.0.0.1:7890',
+      telegramAllowedChatIds: '授權 Chat ID',
+      telegramAllowedChatIdsHint: '留空允許所有會話，多個用逗號分隔。先發送 /start 取得 Chat ID',
       feishuBot: '飛書 Bot',
       feishuEnabled: '已啟用',
       feishuDisabled: '未啟用',

@@ -702,6 +702,9 @@ pub struct AppConfig {
     /// Telegram Bot 代理地址 (e.g. http://127.0.0.1:7890, socks5://127.0.0.1:1080)
     #[serde(default)]
     pub telegram_bot_proxy: Option<String>,
+    /// Telegram Bot 允许的 chat_id 白名单，为空则允许所有
+    #[serde(default)]
+    pub telegram_bot_allowed_chat_ids: Vec<i64>,
     /// 是否启用飞书 Bot
     #[serde(default)]
     pub feishu_bot_enabled: bool,
@@ -878,6 +881,7 @@ impl Default for AppConfig {
             telegram_bot_enabled: false,
             telegram_bot_token: None,
             telegram_bot_proxy: None,
+            telegram_bot_allowed_chat_ids: Vec::new(),
             feishu_bot_enabled: false,
             feishu_app_id: None,
             feishu_app_secret: None,
@@ -990,7 +994,13 @@ impl AppConfig {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, content)?;
+        std::fs::write(path, &content)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(path, perms)?;
+        }
         Ok(())
     }
 

@@ -310,6 +310,8 @@ export default {
       telegramBotHint: '从 @BotFather 获取，支持 /reports /report /generate /device 命令',
       telegramBotProxy: '代理地址',
       telegramBotProxyHint: '无法直连时填写，如 http://127.0.0.1:7890',
+      telegramAllowedChatIds: '授权 Chat ID',
+      telegramAllowedChatIdsHint: '留空允许所有会话，多个用逗号分隔。先发送 /start 获取 Chat ID',
       feishuBot: '飞书 Bot',
       feishuEnabled: '已启用',
       feishuDisabled: '未启用',

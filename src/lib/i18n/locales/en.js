@@ -471,6 +471,8 @@ export default {
       telegramBotHint: 'Get from @BotFather. Supports /reports /report /generate /device commands.',
       telegramBotProxy: 'Proxy',
       telegramBotProxyHint: 'Required in China. e.g. http://127.0.0.1:7890 or socks5://127.0.0.1:1080',
+      telegramAllowedChatIds: 'Allowed Chat IDs',
+      telegramAllowedChatIdsHint: 'Leave empty to allow all. Separate multiple with commas. Send /start to get your Chat ID',
       feishuBot: 'Feishu Bot',
       feishuEnabled: 'Enabled',
       feishuDisabled: 'Disabled',

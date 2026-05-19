@@ -18,11 +18,18 @@ use uuid::Uuid;
 pub const LOCALHOST_API_HOST: &str = "127.0.0.1";
 
 pub fn effective_api_host(config_host: Option<&str>) -> String {
-    config_host
+    let host = config_host
         .map(str::trim)
         .filter(|h| !h.is_empty())
-        .unwrap_or(LOCALHOST_API_HOST)
-        .to_string()
+        .unwrap_or(LOCALHOST_API_HOST);
+    // 只允许 loopback 地址，防止暴露到局域网
+    match host {
+        "127.0.0.1" | "::1" | "localhost" => host.to_string(),
+        _ => {
+            log::warn!("localhost_api_host '{host}' 非 loopback 地址，强制使用 127.0.0.1");
+            LOCALHOST_API_HOST.to_string()
+        }
+    }
 }
 const LOCALHOST_API_TOKEN_FILE: &str = "localhost_api_token.txt";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;

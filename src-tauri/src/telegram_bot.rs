@@ -100,7 +100,7 @@ impl TelegramBotRuntime {
         }
     }
 
-    fn start(&mut self, bot_token: String, devices: Vec<DeviceEndpoint>, proxy: Option<String>) {
+    fn start(&mut self, bot_token: String, devices: Vec<DeviceEndpoint>, proxy: Option<String>, allowed_chat_ids: Vec<i64>) {
         self.stop();
         if let Ok(mut s) = self.shared.lock() {
             s.starting = true;
@@ -109,7 +109,7 @@ impl TelegramBotRuntime {
         }
         let shared = self.shared.clone();
         self.handle = Some(tokio::spawn(async move {
-            run(&bot_token, &devices, &shared, proxy.as_deref()).await;
+            run(&bot_token, &devices, &shared, proxy.as_deref(), allowed_chat_ids).await;
         }));
     }
 
@@ -182,13 +182,14 @@ fn build_device_list(config: &AppConfig, data_dir: &Path) -> Vec<DeviceEndpoint>
 }
 
 pub fn sync_telegram_bot_runtime(state: &Arc<Mutex<AppState>>) -> Result<(), AppError> {
-    let (enabled, bot_token, devices, proxy) = {
+    let (enabled, bot_token, devices, proxy, allowed_chat_ids) = {
         let s = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
         let enabled = s.config.telegram_bot_enabled;
         let bot_token = s.config.telegram_bot_token.clone();
         let proxy = s.config.telegram_bot_proxy.clone();
+        let allowed_chat_ids = s.config.telegram_bot_allowed_chat_ids.clone();
         let devices = build_device_list(&s.config, &s.data_dir);
-        (enabled, bot_token, devices, proxy)
+        (enabled, bot_token, devices, proxy, allowed_chat_ids)
     };
 
     let mut s = state.lock().map_err(|e| AppError::Unknown(e.to_string()))?;
@@ -215,7 +216,7 @@ pub fn sync_telegram_bot_runtime(state: &Arc<Mutex<AppState>>) -> Result<(), App
     }
 
     s.telegram_bot_runtime
-        .start(bot_token.unwrap(), devices, proxy);
+        .start(bot_token.unwrap(), devices, proxy, allowed_chat_ids);
     log::info!(
         "Telegram Bot 已启动 ({} 台设备)",
         s.config.node_devices.len() + 1
@@ -228,6 +229,7 @@ async fn run(
     devices: &[DeviceEndpoint],
     shared: &Arc<std::sync::Mutex<SharedBotStatus>>,
     proxy: Option<&str>,
+    allowed_chat_ids: Vec<i64>,
 ) {
     let mut builder = Client::builder().timeout(std::time::Duration::from_secs(35));
     if let Some(p) = proxy {
@@ -351,6 +353,23 @@ async fn run(
                             for u in updates {
                                 offset = u.update_id + 1;
                                 if let Some(msg) = u.message {
+                                    // chat_id 白名单校验
+                                    if !allowed_chat_ids.is_empty()
+                                        && !allowed_chat_ids.contains(&msg.chat.id)
+                                    {
+                                        log::warn!(
+                                            "TG Bot 忽略未授权 chat_id: {}",
+                                            msg.chat.id
+                                        );
+                                        send_text(
+                                            &client,
+                                            bot_token,
+                                            msg.chat.id,
+                                            "⛔ 该会话未被授权",
+                                        )
+                                        .await;
+                                        continue;
+                                    }
                                     let reply = if let Some(text) = msg.text.as_deref() {
                                         log::info!("TG Bot 收到消息: {text}");
                                         let cmd = normalize_command(

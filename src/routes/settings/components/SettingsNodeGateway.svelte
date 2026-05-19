@@ -446,6 +446,21 @@
               />
             </label>
             <p class="text-[11px] text-slate-400 dark:text-slate-500">{t('nodeGatewayPage.telegramBotProxyHint')}</p>
+            <label class="block mt-2">
+              <span class="text-[11px] text-slate-500 dark:text-slate-400">{t('nodeGatewayPage.telegramAllowedChatIds')}</span>
+              <input
+                type="text"
+                value={(config.telegram_bot_allowed_chat_ids || []).join(', ')}
+                on:blur={(e) => {
+                  const ids = e.target.value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+                  config.telegram_bot_allowed_chat_ids = ids;
+                  persistConfig();
+                }}
+                class="mt-0.5 w-full rounded-md bg-white/80 px-3 py-1.5 text-sm font-mono text-slate-800 ring-1 ring-slate-200 focus:ring-primary-300 dark:bg-slate-700/50 dark:text-white dark:ring-slate-600 dark:focus:ring-primary-600 focus:outline-none"
+                placeholder="123456789, 987654321"
+              />
+            </label>
+            <p class="text-[11px] text-slate-400 dark:text-slate-500">{t('nodeGatewayPage.telegramAllowedChatIdsHint')}</p>
             <p class="text-[11px] text-slate-400 dark:text-slate-500">{t('nodeGatewayPage.telegramBotHint')}</p>
           </div>
           {/if}

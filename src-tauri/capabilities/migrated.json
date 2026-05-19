@@ -60,7 +60,7 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "args": true,
+          "args": [{ "validator": "\\S+" }],
           "cmd": "open",
           "name": "open",
           "sidecar": false
