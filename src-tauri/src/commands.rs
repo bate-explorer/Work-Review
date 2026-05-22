@@ -7325,7 +7325,13 @@ pub async fn check_ocr_available() -> Result<serde_json::Value, AppError> {
         "platform": std::env::consts::OS,
     }))
 }
-
+#[tauri::command]
+fn close_rest_window(app_handle: tauri::AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("rest-overlay") {
+        // 因为我们在 WindowEvent 拦截了 close，所以这里应该直接 hide
+        window.hide().unwrap();
+    }
+}
 /// 执行 OCR 识别
 #[tauri::command]
 pub async fn run_ocr(
