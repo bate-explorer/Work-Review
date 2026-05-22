@@ -402,5 +402,68 @@
     </div>
   </div>
 </div>
+<div class="settings-row">
+          <div>
+            <span class="settings-text">{t('settingsGeneral.lightweightMode')}</span>
+            <p class="settings-muted mt-0.5">{t('settingsGeneral.lightweightModeDescription')}</p>
+          </div>
+          <button
+            on:click={toggleLightweightMode}
+            class="switch-track {config.lightweight_mode ? 'bg-primary-500' : 'bg-slate-300 dark:bg-slate-600'}"
+          >
+            <span class="switch-thumb {config.lightweight_mode ? 'translate-x-5' : 'translate-x-0'}"></span>
+          </button>
+        </div>
 
+        <div class="pt-4 border-t border-slate-200 dark:border-slate-700 mt-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="settings-text">定时休息提醒 (20-20-20法则)</span>
+              <p class="settings-muted mt-0.5">每隔一段时间强制全屏锁屏，提醒您远眺休息，保护视力。</p>
+            </div>
+            <button
+              type="button"
+              on:click={() => {
+                config.rest_reminder_enabled = !config.rest_reminder_enabled;
+                handleChange();
+              }}
+              class="switch-track {config.rest_reminder_enabled ? 'bg-primary-500' : 'bg-slate-300 dark:bg-slate-600'}"
+            >
+              <span class="switch-thumb {config.rest_reminder_enabled ? 'translate-x-5' : 'translate-x-0'}"></span>
+            </button>
+          </div>
+
+          {#if config.rest_reminder_enabled}
+            <div class="flex items-center gap-6 mt-3 pl-3 border-l-2 border-primary-200/60 dark:border-primary-800/40">
+              <div class="flex items-center gap-2">
+                <span class="text-xs settings-subtle">工作时长:</span>
+                <input
+                  type="number"
+                  min="1"
+                  bind:value={config.rest_work_duration_mins}
+                  on:change={handleChange}
+                  class="w-16 rounded-md border border-slate-200 bg-white px-2 py-1 text-center text-sm dark:border-slate-600 dark:bg-slate-800"
+                />
+                <span class="text-xs settings-subtle">分钟</span>
+              </div>
+              
+              <div class="flex items-center gap-2">
+                <span class="text-xs settings-subtle">休息时长:</span>
+                <input
+                  type="number"
+                  min="5"
+                  bind:value={config.rest_duration_secs}
+                  on:change={handleChange}
+                  class="w-16 rounded-md border border-slate-200 bg-white px-2 py-1 text-center text-sm dark:border-slate-600 dark:bg-slate-800"
+                />
+                <span class="text-xs settings-subtle">秒</span>
+              </div>
+            </div>
+          {/if}
+        </div>
+        </div>
+   </div>
+  </div>
+</div> 
+<SettingsAppearance bind:config mode="background-only" on:change={handleChange} />
 <SettingsAppearance bind:config mode="background-only" on:change={handleChange} />
